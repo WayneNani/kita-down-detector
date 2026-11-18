@@ -8,7 +8,7 @@ Datensparsames Tracking, welche Kitas wann **verkürzte Betreuungszeiten**, **No
 - Keine IP-Adressen, keine Cookies, kein Freitext, keine externen Ressourcen; Einzelmeldungen werden nach Frist gelöscht
 - Öffentliches Änderungsprotokoll und offene JSON-API (nur aggregierte Daten)
 
-Details und Begründungen: [`docs/konzept.md`](docs/konzept.md).
+Details und Begründungen: [`docs/konzept.md`](docs/konzept.md) (fachlich) und [`docs/technisches-konzept.md`](docs/technisches-konzept.md) (Zielarchitektur mit Go, PostgreSQL und React). Der aktuelle Node-Code ist ein Prototyp, der als ausführbare Spezifikation dient.
 
 ## Schnellstart
 
