@@ -121,8 +121,13 @@ Der Landesdatensatz enthält nach Katalogbeschreibung **keine E-Mail-Adressen**.
 ### 8.3 Empfohlenes Vorgehen
 
 1. Landesdatensatz importieren → alle Kitas sind suchbar, und es kann für jede gemeldet werden, auch ohne Kontaktadresse.
-2. **Pilotstädte** wählen (z. B. 2–3 Städte mit offenen Kita-Daten inkl. Kontakt) und dort Adressen importieren. Dort gezielt Elternbeiräte und JAEB ansprechen.
-3. Parallel eine **IFG-Anfrage** an LVR und LWL bzw. an die Jugendämter der Pilotregionen stellen.
+2. **Pilotstädte: Bonn und Köln.**
+   - **Bonn:** Open-Data-Datensatz „Kindertageseinrichtungen“ mit Name, Adresse, Stadtbezirk, Ortsteil und Träger (Angaben zu freien Trägern ohne Gewähr auf Vollständigkeit). E-Mail-Adressen laut Katalogbeschreibung nicht erkennbar – noch prüfen.
+   - **Köln:** Datensatz „Kindertagesstätten in Köln“ (Geoportal Stadt Köln, JSON) mit Standorten, getrennt nach städtischen und freien Trägern. E-Mail-Adressen ebenfalls nicht erkennbar – noch prüfen.
+   - Beide Datensätze dienen zum Abgleich mit dem Landesdatensatz (Träger, Koordinaten).
+   - Für die Kontaktadressen die **Jugendämter Bonn und Köln direkt ansprechen** (Kooperation statt Anfrage: Liste der Funktionsadressen, mindestens für die städtischen Kitas). Falls das nicht klappt: IFG-Anfrage.
+   - Für die Verbreitung die **Jugendamtselternbeiräte (JAEB) Bonn und Köln** ansprechen, die die Elternbeiräte der Kitas erreichen.
+3. Parallel ggf. eine **IFG-Anfrage** an LVR (zuständig für das Rheinland, also Bonn und Köln) stellen.
 4. Ab dann wächst die Abdeckung über den Einladungsweg (Abschnitt 6).
 
 Fehlende Kitas können über ein Formular „Kita fehlt“ gemeldet werden und werden nach Prüfung ergänzt.
@@ -132,7 +137,8 @@ Fehlende Kitas können über ein Formular „Kita fehlt“ gemeldet werden und w
 - [ ] Hosting in der EU, Reverse-Proxy **ohne** Access-Logs (oder mit gekürzten IPs), `TRUST_PROXY=1`.
 - [ ] Impressum, Datenschutzerklärung juristisch prüfen lassen (Verantwortliche:r, Rechtsgrundlage Art. 6 Abs. 1 lit. f DSGVO für die Hash-Bildung).
 - [ ] Einladungsweg für Elternbeirat-Links umsetzen (s. 6.) und mit 1–2 Elternbeiräten testen.
-- [ ] Landesdatensatz prüfen (Felder, ID, Lizenz) und Pilotstädte auswählen (s. 8.3).
+- [ ] Landesdatensatz sowie Bonner und Kölner Datensatz prüfen (Felder, ID, Lizenz, E-Mail ja/nein) (s. 8.3).
+- [ ] Jugendämter und JAEB in Bonn und Köln ansprechen (s. 8.3).
 - [ ] IFG-Anfrage zu Funktionsadressen der Kitas stellen (s. 8.2).
 - [ ] Optional: Bereich (U3 / Ü3 / Hort) je Meldung.
 - [ ] Optional: Benachrichtigungen (z. B. RSS/ICS-Feed pro Kita – ohne Konten).
