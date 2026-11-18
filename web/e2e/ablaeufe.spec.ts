@@ -53,3 +53,16 @@ test('Datenschutzseite und unbekannte Seite', async ({ page }) => {
   const r = await page.goto('/kita/999999');
   expect(r?.status()).toBe(404);
 });
+
+test('Ansicht: Tage ohne Meldung als regulär (lokal, Standard aus)', async ({ page }) => {
+  await page.goto('/kita/6');
+  const schalter = page.getByRole('switch', { name: /Tage ohne Meldung als reguläre Betreuung/ });
+  await expect(schalter).not.toBeChecked();
+  await expect(page.locator('.tage-liste')).toContainText('Keine Meldung');
+  await schalter.check();
+  await expect(page.locator('.tage-liste')).toContainText('Vermutlich regulär');
+  await expect(page.locator('.tage-liste')).not.toContainText('Keine Meldung');
+  // bleibt nach Neuladen erhalten, nur lokal
+  await page.reload();
+  await expect(page.getByRole('switch', { name: /Tage ohne Meldung/ })).toBeChecked();
+});

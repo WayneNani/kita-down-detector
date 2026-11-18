@@ -8,6 +8,7 @@ import { KitaListe } from '../components/KitaListe';
 import { FehlerBox, Laden } from '../components/Fehler';
 import { IconOrt, IconSuche } from '../components/Icons';
 import { StatusBadge, StatusDetails } from '../components/Status';
+import { AnsichtUmschalter } from '../components/AnsichtUmschalter';
 import { Stand } from '../components/Stand';
 import { adresse } from '../components/KitaListe';
 
@@ -50,6 +51,7 @@ export default function Start() {
       {ids.length > 0 && (
         <section aria-labelledby="meine">
           <h2 id="meine">Meine Kitas</h2>
+          <AnsichtUmschalter />
           {meine.isPending && <Laden />}
           {meine.isError && !meine.data && <FehlerBox fehler={meine.error} />}
           <KitaListe eintraege={meineSortiert} />

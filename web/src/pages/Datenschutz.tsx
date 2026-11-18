@@ -32,6 +32,10 @@ export default function Datenschutz() {
           <strong>„Meine Kitas“</strong> speichern wir ausschließlich im Speicher Ihres Browsers. Wir erfahren nicht, welche Kitas Sie sich merken.
         </li>
         <li>
+          <strong>„Tage ohne Meldung als reguläre Betreuung anzeigen“</strong> ist eine reine Ansichts-Einstellung, die nur in Ihrem Browser gespeichert
+          wird. Sie verändert keine Daten und wird nicht übertragen.
+        </li>
+        <li>
           <strong>„Kitas in meiner Nähe“:</strong> Ihr Standort wird schon auf Ihrem Gerät auf ca. 1 km gerundet, bevor er gesendet wird, und auf dem
           Server nicht gespeichert.
         </li>

@@ -10,7 +10,9 @@ import { datumLang, datumRelativ, istWochenende, uhrzeitAus } from '../lib/datum
 import { STATUS_LABEL, STUFE_LABEL } from '../lib/texte';
 import { BottomSheet } from '../components/BottomSheet';
 import { MeldeFormular } from '../components/MeldeFormular';
-import { StatusBadge, StatusDetails } from '../components/Status';
+import { StatusBadge, StatusDetails, anzeigeFuer } from '../components/Status';
+import { useOhneMeldungAlsRegulaer } from '../lib/einstellungen';
+import { AnsichtUmschalter } from '../components/AnsichtUmschalter';
 import { FehlerBox, Laden } from '../components/Fehler';
 import { IconPlus, IconStern, IconTeilen } from '../components/Icons';
 import { Stand } from '../components/Stand';
@@ -25,6 +27,7 @@ export default function Kita() {
   useTitel(kk ? `${kk.name}${kk.ort ? ` (${kk.ort})` : ''}` : null);
   const { info } = useInfo();
   const { istFavorit, umschalten } = useFavoriten();
+  const [ohneMeldungAlsRegulaer] = useOhneMeldungAlsRegulaer();
   const [sheet, setSheet] = useState(false);
   const qc = useQueryClient();
   const toast = useToast();
@@ -53,6 +56,7 @@ export default function Kita() {
   const d = kita.data;
   const k = d.kita;
   const heute = d.tage[0];
+  const heuteAnzeige = heute ? anzeigeFuer(heute, ohneMeldungAlsRegulaer) : null;
   const weitere = d.tage.slice(1);
   const fav = istFavorit(k.id);
 
@@ -107,16 +111,20 @@ export default function Kita() {
       <Stand aktualisiert={kita.dataUpdatedAt} />
 
       {heute && (
-        <section className={`heute-karte s-${heute.status}`} aria-labelledby="heute-titel">
+        <section className={`heute-karte s-${heuteAnzeige?.status ?? heute.status}`} aria-labelledby="heute-titel">
           <h2 id="heute-titel">Heute, {datumLang(heute.datum).split(', ')[1]}</h2>
           <StatusBadge s={heute} gross />
           <StatusDetails s={heute} />
-          {heute.status === 'unbekannt' && <p className="hinweis">Keine Meldung heißt nicht automatisch reguläre Betreuung.</p>}
+          {heute.status === 'unbekannt' && !heuteAnzeige?.angenommen && (
+            <p className="hinweis">Keine Meldung heißt nicht automatisch reguläre Betreuung.</p>
+          )}
+          {heuteAnzeige?.angenommen && <p className="hinweis">Es liegt keine Meldung vor – angezeigt nach Ihrer Einstellung.</p>}
         </section>
       )}
 
       <section aria-labelledby="tage-titel">
         <h2 id="tage-titel">Nächste Tage</h2>
+        <AnsichtUmschalter />
         <ul className="tage-liste">
           {weitere.map((t) => (
             <li key={t.datum} className={istWochenende(t.datum) ? 'wochenende' : ''}>
