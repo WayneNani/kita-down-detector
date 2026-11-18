@@ -137,8 +137,12 @@ func lesenGeoJSON(features []json.RawMessage) ([]Roh, error) {
 		}
 		if ft.Geometry != nil {
 			var p []float64
-			if ft.Geometry.Type == "Point" && json.Unmarshal(ft.Geometry.Coordinates, &p) == nil && len(p) >= 2 {
+			var mp [][]float64
+			switch {
+			case ft.Geometry.Type == "Point" && json.Unmarshal(ft.Geometry.Coordinates, &p) == nil && len(p) >= 2:
 				r.X, r.Y = &p[0], &p[1]
+			case ft.Geometry.Type == "MultiPoint" && json.Unmarshal(ft.Geometry.Coordinates, &mp) == nil && len(mp) > 0 && len(mp[0]) >= 2:
+				r.X, r.Y = &mp[0][0], &mp[0][1]
 			}
 		}
 		out = append(out, r)
@@ -221,11 +225,11 @@ var Felder = []Feld{FeldID, FeldName, FeldTraeger, FeldStrasse, FeldHausnummer, 
 
 // Kandidaten je Zielfeld, in Prioritätsreihenfolge (normalisierte Spaltennamen).
 var kandidaten = map[Feld][]string{
-	FeldID:         {"id", "einrichtungsnummer", "einrichtungsnr", "einrichtungsid", "kibizid", "kitaid", "objectid", "fid", "gmlid", "nummer", "nr"},
+	FeldID:         {"id", "einrichtungsnummer", "einrichtungsnr", "einrichtungsid", "kibizid", "kitaid", "objectid", "fid", "gmlid"},
 	FeldName:       {"name", "einrichtungsname", "nameeinrichtung", "namedereinrichtung", "nameeinrichtungkita", "bezeichnung", "einrichtung", "kitaname", "kita", "titel", "objektname"},
 	FeldTraeger:    {"traeger", "traegername", "nametraeger", "traegerschaft", "operator", "betreiber"},
 	FeldStrasse:    {"strasse", "strassehausnummer", "strasseundhausnummer", "addrstreet", "anschrift", "adresse", "str", "strassenname"},
-	FeldHausnummer: {"hausnummer", "hausnr", "hnr", "addrhousenumber"},
+	FeldHausnummer: {"hausnummer", "hausnr", "hnr", "addrhousenumber", "nr"},
 	FeldPlz:        {"plz", "postleitzahl", "addrpostcode"},
 	FeldOrt:        {"ort", "gemeinde", "gemeindename", "stadt", "kommune", "addrcity", "ortsname"},
 	FeldEmail:      {"email", "emailadresse", "mail", "contactemail", "kontaktemail", "emaileinrichtung"},

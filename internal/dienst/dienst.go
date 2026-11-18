@@ -143,7 +143,7 @@ func (d *Dienst) Suche(ctx context.Context, begriff string) ([]KitaUebersicht, e
 	for i, w := range woerter {
 		muster[i] = "%" + w + "%" // nach Normalisierung nur a-z0-9, also kein Escaping nötig
 	}
-	kitas, err := d.Q.SucheKitas(ctx, db.SucheKitasParams{Muster: muster, Begriff: begriff, Anzahl: 50})
+	kitas, err := d.Q.SucheKitas(ctx, db.SucheKitasParams{Erstes: muster[0], Weitere: muster[1:], Begriff: begriff, Anzahl: 50})
 	if err != nil {
 		return nil, err
 	}
@@ -346,7 +346,8 @@ func (d *Dienst) neuBerechnen(ctx context.Context, q *db.Queries, kitaID int64, 
 	meldungen := make([]status.Meldung, len(rows))
 	for i, r := range rows {
 		meldungen[i] = status.Meldung{ID: r.ID, Status: domain.Status(r.Status), Von: r.DatumVon, Bis: r.DatumBis,
-			UhrzeitVon: r.UhrzeitVon, UhrzeitBis: r.UhrzeitBis, Grund: r.Grund, Quelle: domain.Quelle(r.Quelle), MelderHash: r.MelderHash}
+			UhrzeitVon: r.UhrzeitVon, UhrzeitBis: r.UhrzeitBis, Grund: r.Grund, Quelle: domain.Quelle(r.Quelle), MelderHash: r.MelderHash,
+			ErstelltAm: r.ErstelltAm}
 	}
 	alt, err := d.tage(ctx, q, []int64{kitaID}, von, bis)
 	if err != nil {

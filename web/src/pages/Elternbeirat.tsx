@@ -59,7 +59,10 @@ export default function Elternbeirat() {
               <label className="feld">
                 <span>Ihre E-Mail-Adresse (für den Link)</span>
                 <input type="email" autoComplete="email" inputMode="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-                <small>Wird nur bis zum Versand des Links gespeichert.</small>
+                <small>
+                  Die Kita sieht diese Adresse in ihrer Bestätigungsmail, damit sie Ihre Anfrage zuordnen kann. Wir speichern sie nur, bis der Link
+                  versendet ist.
+                </small>
               </label>
               {!d.kontakt_bekannt && (
                 <label className="feld">

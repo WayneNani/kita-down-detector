@@ -3,6 +3,11 @@
 # Vorher die Dateien in deploy/secrets/ anlegen (siehe deploy/README.md).
 name: kita-ausfall
 
+# Container-Logs begrenzen (Docker rotiert sonst nie)
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
 services:
   caddy:
     image: caddy:2.10-alpine
@@ -14,8 +19,33 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-    networks: [web]
+    networks:
+      web:
+        # feste Adressen: Die App vertraut X-Forwarded-For nur von hier
+        ipv4_address: 172.30.0.10
+        ipv6_address: fd00:4b17:ae::10
     depends_on: [app]
+    logging: *logging
+
+  # Migrationen laufen einmalig mit der Schema-Rolle; die App selbst hat nur DML-Rechte.
+  migrate:
+    build: ..
+    command: ["migrate"]
+    restart: "no"
+    environment:
+      APP_ENV: production
+      BASE_URL: https://${DOMAIN}
+      SMTP_URL: smtp://unbenutzt
+      ALTCHA_HMAC_SECRET_FILE: /run/secrets/altcha_secret
+      MIGRATE_DATABASE_URL_FILE: /run/secrets/migrate_database_url
+    secrets: [migrate_database_url, altcha_secret]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [db]
+    depends_on:
+      db: { condition: service_healthy }
+    logging: *logging
 
   app:
     build: ..
@@ -26,12 +56,11 @@ services:
       KONTAKT_EMAIL: ${KONTAKT_EMAIL:?KONTAKT_EMAIL setzen}
       MAIL_FROM: ${MAIL_FROM:-Kita-Ausfall NRW <noreply@${DOMAIN}>}
       VERTRAUTE_DOMAINS: ${VERTRAUTE_DOMAINS:-}
-      TRUSTED_PROXY_CIDRS: 172.30.0.0/24
+      TRUSTED_PROXY_CIDRS: 172.30.0.10/32,fd00:4b17:ae::10/128
       DATABASE_URL_FILE: /run/secrets/database_url
-      MIGRATE_DATABASE_URL_FILE: /run/secrets/migrate_database_url
       ALTCHA_HMAC_SECRET_FILE: /run/secrets/altcha_secret
       SMTP_URL_FILE: /run/secrets/smtp_url
-    secrets: [database_url, migrate_database_url, altcha_secret, smtp_url]
+    secrets: [database_url, altcha_secret, smtp_url]
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -42,7 +71,8 @@ services:
       retries: 3
     networks: [web, db]
     depends_on:
-      db: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    logging: *logging
 
   db:
     image: postgres:17-alpine
@@ -63,11 +93,18 @@ services:
       timeout: 5s
       retries: 5
     networks: [db]   # nicht nach außen veröffentlicht
+    logging: *logging
 
 networks:
+  # IPv6 muss an sein: sonst kommen alle IPv6-Verbindungen mit der Gateway-Adresse
+  # an, und alle IPv6-Nutzer:innen teilen sich ein Rate-Limit und einen Melder-Hash.
+  # Voraussetzung: Host mit IPv6 und Docker mit ip6tables (Standard ab Docker 27).
   web:
+    enable_ipv6: true
     ipam:
-      config: [{ subnet: 172.30.0.0/24 }]
+      config:
+        - subnet: 172.30.0.0/24
+        - subnet: fd00:4b17:ae::/64
   db:
     internal: true
 

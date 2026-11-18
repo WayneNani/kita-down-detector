@@ -16,7 +16,7 @@ var nextID int64
 
 func m(opts ...mOpt) Meldung {
 	nextID++
-	x := Meldung{ID: nextID, Status: domain.Notbetreuung, Von: tag, Bis: tag, Quelle: domain.QuelleAnonym, MelderHash: []byte(fmt.Sprintf("h%d", nextID))}
+	x := Meldung{ID: nextID, Status: domain.Notbetreuung, Von: tag, Bis: tag, Quelle: domain.QuelleAnonym, MelderHash: []byte(fmt.Sprintf("h%d", nextID)), ErstelltAm: tag}
 	for _, o := range opts {
 		o(&x)
 	}
@@ -26,6 +26,7 @@ func st(s domain.Status) mOpt      { return func(x *Meldung) { x.Status = s } }
 func quelle(q domain.Quelle) mOpt  { return func(x *Meldung) { x.Quelle = q; x.MelderHash = nil } }
 func hash(h string) mOpt           { return func(x *Meldung) { x.MelderHash = []byte(h) } }
 func zeit(von, bis time.Time) mOpt { return func(x *Meldung) { x.Von, x.Bis = von, bis } }
+func erstellt(t time.Time) mOpt    { return func(x *Meldung) { x.ErstelltAm = t } }
 func uhr(von, bis string) mOpt     { return func(x *Meldung) { x.UhrzeitVon, x.UhrzeitBis = &von, &bis } }
 
 func TestBerechne(t *testing.T) {
@@ -46,7 +47,9 @@ func TestBerechne(t *testing.T) {
 		{"Gleichstand: neueste gewinnt", []Meldung{m(st(domain.Geschlossen)), m(st(domain.Verkuerzt), uhr("08:00", "12:00"))}, domain.Verkuerzt, domain.StufeUnbestaetigt, 1},
 		{"Elternbeirat schlägt bestätigte anonyme", []Meldung{m(quelle(domain.QuelleElternbeirat), st(domain.Verkuerzt)), m(), m(), m()}, domain.Verkuerzt, domain.StufeElternbeirat, 0},
 		{"Kita schlägt Elternbeirat", []Meldung{m(quelle(domain.QuelleKita)), m(quelle(domain.QuelleElternbeirat), st(domain.Geschlossen))}, domain.Notbetreuung, domain.StufeKita, 0},
-		{"Berichtigung schlägt alles", []Meldung{m(quelle(domain.QuelleBerichtigung), st(domain.Regulaer)), m(quelle(domain.QuelleKita)), m(quelle(domain.QuelleElternbeirat), st(domain.Geschlossen))}, domain.Regulaer, domain.StufeBerichtigung, 0},
+		{"Berichtigung schlägt Elternbeirat und ältere Kita-Meldung", []Meldung{m(quelle(domain.QuelleKita)), m(quelle(domain.QuelleBerichtigung), st(domain.Regulaer)), m(quelle(domain.QuelleElternbeirat), st(domain.Geschlossen))}, domain.Regulaer, domain.StufeBerichtigung, 0},
+		{"Kita kann eigene Berichtigung später per Link ändern", []Meldung{m(quelle(domain.QuelleBerichtigung), st(domain.Regulaer)), m(quelle(domain.QuelleKita), st(domain.Geschlossen))}, domain.Geschlossen, domain.StufeKita, 0},
+		{"Hashes verschiedener Meldetage sind nicht unabhängig", []Meldung{m(st(domain.Geschlossen)), m(st(domain.Geschlossen), erstellt(tag.AddDate(0, 0, -1)))}, domain.Geschlossen, domain.StufeUnbestaetigt, 1},
 		{"gleiche Stufe: neueste verifizierte", []Meldung{m(quelle(domain.QuelleElternbeirat), st(domain.Geschlossen)), m(quelle(domain.QuelleElternbeirat), st(domain.Regulaer))}, domain.Regulaer, domain.StufeElternbeirat, 0},
 	}
 	for _, tt := range tests {

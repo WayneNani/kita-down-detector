@@ -13,6 +13,8 @@ export function BottomSheet({ offen, onSchliessen, titel, children }: { offen: b
     if (offen && !d.open) {
       if (typeof d.showModal === 'function') d.showModal();
       else d.setAttribute('open', '');
+      // Fokus auf die Überschrift, damit Screenreader sagen, worum es geht
+      d.querySelector<HTMLElement>('#sheet-titel')?.focus();
       document.documentElement.classList.add('sheet-offen');
     } else if (!offen && d.open) {
       if (typeof d.close === 'function') d.close();
@@ -34,7 +36,9 @@ export function BottomSheet({ offen, onSchliessen, titel, children }: { offen: b
       <div className="sheet-innen">
         <div className="sheet-kopf">
           <span className="sheet-griff" aria-hidden="true" />
-          <h2 id="sheet-titel">{titel}</h2>
+          <h2 id="sheet-titel" tabIndex={-1}>
+            {titel}
+          </h2>
           <button type="button" className="icon-knopf" onClick={onSchliessen} aria-label="Schließen">
             <IconSchliessen />
           </button>

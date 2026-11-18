@@ -51,20 +51,22 @@ Wenn Sie die Anfrage nicht gestellt haben, ignorieren Sie diese Mail einfach.%s`
 	return db.InsertMailParams{An: kontakt.Email, Betreff: "Bitte bestätigen: Berichtigung für " + k.Name, Text: text}
 }
 
-func (d *Dienst) mailEinladung(k db.Kitum, kitaEmail, token string) db.InsertMailParams {
+func (d *Dienst) mailEinladung(k db.Kitum, kitaEmail, ebEmail, token string) db.InsertMailParams {
 	text := fmt.Sprintf(`Guten Tag,
 
-der Elternbeirat Ihrer Einrichtung „%s“ möchte auf Kita-Ausfall NRW einen persönlichen Melde-Link erhalten.
-Damit kann er Notbetreuung, verkürzte Zeiten oder Schließungen als „verifiziert“ melden – das hilft allen Eltern.
+für Ihre Einrichtung „%s“ wurde auf Kita-Ausfall NRW ein persönlicher Melde-Link für den Elternbeirat angefragt.
+Damit kann der Elternbeirat Notbetreuung, verkürzte Zeiten oder Schließungen als „verifiziert“ melden.
 
-Nur Sie können bestätigen, dass die Anfrage wirklich vom Elternbeirat kommt:
+Angefragt von: %s
+Der Link würde an diese Adresse gehen. Bitte bestätigen Sie nur, wenn Sie die Adresse Ihrem Elternbeirat
+zuordnen können (im Zweifel kurz nachfragen):
 %s/einladung#%s
 
 Dort können Sie auf Wunsch auch einen eigenen Melde-Link für Ihre Kita anfordern.
 Der Link ist %d Tage gültig. Wenn Sie die Anfrage nicht einordnen können, ignorieren Sie diese Mail einfach.
 
 Kita-Ausfall NRW speichert keine Namen, keine IP-Adressen und keine Freitexte. Mehr: %s/datenschutz`,
-		k.Name, d.Cfg.BaseURL, token, einladungGueltigTage, d.Cfg.BaseURL)
+		k.Name, ebEmail, d.Cfg.BaseURL, token, einladungGueltigTage, d.Cfg.BaseURL)
 	return db.InsertMailParams{An: kitaEmail, Betreff: "Bitte bestätigen: Melde-Link für den Elternbeirat – " + k.Name, Text: text}
 }
 

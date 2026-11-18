@@ -60,6 +60,7 @@ type KitaZuordnung struct {
 	Geprueft       bool
 	Daten          []byte
 	ZuletztGesehen time.Time
+	Primaer        bool
 }
 
 type Kitum struct {

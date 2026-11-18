@@ -126,19 +126,22 @@ func (q *Queries) KontaktWennLeer(ctx context.Context, arg KontaktWennLeerParams
 }
 
 const listVorschlaege = `-- name: ListVorschlaege :many
-SELECT v.id, v.kita_id, v.email, v.anlass, v.erstellt_am, k.name AS kita_name, k.ort AS kita_ort
+SELECT v.id, v.kita_id, v.email, v.anlass, v.erstellt_am, k.name AS kita_name, k.ort AS kita_ort, kk.email AS bisherige_email, kk.bestaetigt_am AS bisherige_bestaetigt_am
 FROM kontakt_vorschlag v JOIN kita k ON k.id = v.kita_id
+LEFT JOIN kita_kontakt kk ON kk.kita_id = v.kita_id
 ORDER BY v.id
 `
 
 type ListVorschlaegeRow struct {
-	ID         int64
-	KitaID     int64
-	Email      string
-	Anlass     string
-	ErstelltAm time.Time
-	KitaName   string
-	KitaOrt    *string
+	ID                    int64
+	KitaID                int64
+	Email                 string
+	Anlass                string
+	ErstelltAm            time.Time
+	KitaName              string
+	KitaOrt               *string
+	BisherigeEmail        *string
+	BisherigeBestaetigtAm *time.Time
 }
 
 func (q *Queries) ListVorschlaege(ctx context.Context) ([]ListVorschlaegeRow, error) {
@@ -158,6 +161,8 @@ func (q *Queries) ListVorschlaege(ctx context.Context) ([]ListVorschlaegeRow, er
 			&i.ErstelltAm,
 			&i.KitaName,
 			&i.KitaOrt,
+			&i.BisherigeEmail,
+			&i.BisherigeBestaetigtAm,
 		); err != nil {
 			return nil, err
 		}
@@ -167,6 +172,18 @@ func (q *Queries) ListVorschlaege(ctx context.Context) ([]ListVorschlaegeRow, er
 		return nil, err
 	}
 	return items, nil
+}
+
+const loescheAlteVorschlaege = `-- name: LoescheAlteVorschlaege :execrows
+DELETE FROM kontakt_vorschlag WHERE erstellt_am < $1
+`
+
+func (q *Queries) LoescheAlteVorschlaege(ctx context.Context, erstelltAm time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, loescheAlteVorschlaege, erstelltAm)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setzeKontakt = `-- name: SetzeKontakt :exec

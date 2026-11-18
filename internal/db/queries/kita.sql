@@ -2,11 +2,12 @@
 SELECT * FROM kita WHERE id = $1;
 
 -- name: LockKita :one
-SELECT id FROM kita WHERE id = $1 FOR UPDATE;
+SELECT id FROM kita WHERE id = $1 AND aktiv FOR UPDATE;
 
 -- name: SucheKitas :many
 SELECT * FROM kita
-WHERE aktiv AND suchtext LIKE ALL (sqlc.arg(muster)::text[])
+-- erstes Wort einzeln, damit der Trigramm-Index greift
+WHERE aktiv AND suchtext LIKE sqlc.arg(erstes)::text AND suchtext LIKE ALL (sqlc.arg(weitere)::text[])
 ORDER BY similarity(name, sqlc.arg(begriff)::text) DESC, name
 LIMIT sqlc.arg(anzahl);
 
@@ -25,13 +26,21 @@ RETURNING id;
 
 -- name: UpdateKita :exec
 UPDATE kita SET name = $2, traeger = $3, strasse = $4, plz = $5, ort = $6, lat = $7, lon = $8,
-  suchtext = $9, adresse_norm = $10, aktiv = true
+  suchtext = $9, adresse_norm = $10
 WHERE id = $1;
+
+-- name: SetzeKitaAktiv :exec
+UPDATE kita SET aktiv = true WHERE id = $1 AND NOT aktiv;
 
 -- name: KitaKandidaten :many
 SELECT id, name, adresse_norm, similarity(name, sqlc.arg(name)::text)::real AS aehnlichkeit
 FROM kita
 WHERE plz = sqlc.arg(plz)::text
+  -- Kitas, die diese Quelle schon einem anderen Datensatz zugeordnet hat, kommen nicht in Frage
+  AND NOT EXISTS (
+    SELECT 1 FROM kita_zuordnung z
+    WHERE z.kita_id = kita.id AND z.quelle = sqlc.arg(quelle)::text AND z.quelle_id <> sqlc.arg(quelle_id)::text
+  )
 ORDER BY (adresse_norm = sqlc.arg(adresse_norm)::text) DESC, aehnlichkeit DESC
 LIMIT 3;
 
@@ -42,20 +51,21 @@ WHERE aktiv AND id IN (
   WHERE z.quelle = sqlc.arg(quelle) AND z.zuletzt_gesehen < sqlc.arg(stichtag)
 ) AND NOT EXISTS (
   SELECT 1 FROM kita_zuordnung z2
-  WHERE z2.kita_id = kita.id AND z2.zuletzt_gesehen >= sqlc.arg(stichtag)
+  WHERE z2.kita_id = kita.id AND z2.primaer AND z2.zuletzt_gesehen >= sqlc.arg(stichtag)
 );
 
 -- name: GetZuordnung :one
 SELECT * FROM kita_zuordnung WHERE quelle = $1 AND quelle_id = $2;
 
 -- name: UpsertZuordnung :exec
-INSERT INTO kita_zuordnung (quelle, quelle_id, kita_id, aehnlichkeit, geprueft, daten, zuletzt_gesehen)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO kita_zuordnung (quelle, quelle_id, kita_id, aehnlichkeit, geprueft, daten, zuletzt_gesehen, primaer)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (quelle, quelle_id) DO UPDATE SET
   kita_id = COALESCE(kita_zuordnung.kita_id, excluded.kita_id),
   aehnlichkeit = COALESCE(kita_zuordnung.aehnlichkeit, excluded.aehnlichkeit),
   daten = excluded.daten,
-  zuletzt_gesehen = excluded.zuletzt_gesehen;
+  zuletzt_gesehen = excluded.zuletzt_gesehen,
+  primaer = excluded.primaer;
 
 -- name: OffeneZuordnungen :many
 SELECT * FROM kita_zuordnung WHERE kita_id IS NULL AND NOT geprueft ORDER BY quelle, quelle_id LIMIT $1;
@@ -65,3 +75,6 @@ UPDATE kita_zuordnung SET kita_id = $3, geprueft = true WHERE quelle = $1 AND qu
 
 -- name: ZaehleKitas :one
 SELECT count(*) FILTER (WHERE aktiv) AS aktiv, count(*) AS gesamt FROM kita;
+
+-- name: SperreKita :exec
+SELECT id FROM kita WHERE id = $1 FOR UPDATE;

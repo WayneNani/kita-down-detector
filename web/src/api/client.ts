@@ -53,6 +53,9 @@ export async function api<T>(pfad: string, opt: Optionen = {}): Promise<T> {
       headers,
       body: opt.body !== undefined ? JSON.stringify(opt.body) : undefined,
       credentials: 'same-origin',
+      // Immer beim Server nachfragen – sonst liefert der HTTP-Cache nach einer
+      // eigenen Meldung bis zu 90 s lang den alten Stand.
+      cache: 'no-cache',
       signal: opt.signal,
     });
   } catch (e) {
@@ -65,5 +68,18 @@ export async function api<T>(pfad: string, opt: Optionen = {}): Promise<T> {
     const p = (daten ?? {}) as { title?: string; detail?: string; fehler?: FeldFehler[] };
     throw new ApiError(res.status, p.title ?? `Fehler ${res.status}`, p.detail, Array.isArray(p.fehler) ? p.fehler : []);
   }
+  // Antwort kam offline aus dem Service-Worker-Cache: Zeitpunkt merken (nicht serialisiert).
+  if (res.headers.get('X-Aus-Cache') && daten && typeof daten === 'object') {
+    const zeit = Date.parse(res.headers.get('Date') ?? '');
+    Object.defineProperty(daten, AUS_CACHE, { value: Number.isNaN(zeit) ? 0 : zeit, enumerable: false });
+  }
   return daten as T;
+}
+
+const AUS_CACHE = '__ausCache';
+
+/** Zeitpunkt der zwischengespeicherten Antwort, falls die Daten aus dem Offline-Cache stammen. */
+export function ausCacheVom(daten: unknown): number | null {
+  if (!daten || typeof daten !== 'object' || !(AUS_CACHE in daten)) return null;
+  return (daten as Record<string, number>)[AUS_CACHE] ?? 0;
 }

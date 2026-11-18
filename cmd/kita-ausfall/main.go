@@ -312,6 +312,7 @@ func link(ctx context.Context, d *dienst.Dienst, args []string) error {
 	kitaID := fs.Int64("kita", 0, "Kita-ID")
 	rolle := fs.String("rolle", "", "elternbeirat oder kita")
 	bis := fs.String("gueltig-bis", "", "Ablaufdatum (Standard: Ende des Kita-Jahres, 31.07.)")
+	entfernen := fs.Bool("meldungen-entfernen", false, "beim Widerrufen auch alle Meldungen über die widerrufenen Links löschen (z. B. bei Missbrauch)")
 	_ = fs.Parse(args[1:])
 	k, err := d.Q.GetKita(ctx, *kitaID)
 	if err != nil {
@@ -341,11 +342,16 @@ func link(ctx context.Context, d *dienst.Dienst, args []string) error {
 		if *rolle != "" {
 			r = rolle
 		}
-		n, err := d.Q.WiderrufeLinks(ctx, db.WiderrufeLinksParams{KitaID: k.ID, Rolle: r})
+		n, entfernt, err := d.LinksWiderrufen(ctx, k.ID, r, *entfernen)
 		if err != nil {
 			return err
 		}
 		fmt.Printf("%d Link(s) für „%s“ widerrufen.\n", n, k.Name)
+		if *entfernen {
+			fmt.Printf("%d Meldung(en) über widerrufene Links gelöscht, Status neu berechnet.\n", entfernt)
+		} else {
+			fmt.Println("Bisherige Meldungen über diese Links bleiben gültig. Zum Löschen: --meldungen-entfernen")
+		}
 	case "liste":
 		links, err := d.Q.ListLinks(ctx, k.ID)
 		if err != nil {
@@ -389,7 +395,18 @@ func vorschlaege(ctx context.Context, d *dienst.Dienst, args []string) error {
 			return err
 		}
 		for _, v := range liste {
-			fmt.Printf("#%d  %s  →  %s (%s)  Anlass: %s, %s\n", v.ID, v.Email, v.KitaName, deref(v.KitaOrt), v.Anlass, datum.Format(v.ErstelltAm))
+			hinweis := ""
+			if d.Vertraut(v.Email) {
+				hinweis = "  [Domain eines bekannten Trägers]"
+			}
+			bisher := "keine"
+			if v.BisherigeEmail != nil {
+				bisher = *v.BisherigeEmail + " (unbestätigt)"
+				if v.BisherigeBestaetigtAm != nil {
+					bisher = *v.BisherigeEmail + " (BESTÄTIGT)"
+				}
+			}
+			fmt.Printf("#%d  %s  →  %s (%s)  Anlass: %s, %s%s\n     bisherige Adresse: %s\n", v.ID, v.Email, v.KitaName, deref(v.KitaOrt), v.Anlass, datum.Format(v.ErstelltAm), hinweis, bisher)
 		}
 		fmt.Printf("%d offen. Prüfen Sie, ob die Adresse zur Kita gehört (Website, Träger), dann: vorschlaege annehmen|ablehnen <id>\n", len(liste))
 		return nil
@@ -400,11 +417,12 @@ func vorschlaege(ctx context.Context, d *dienst.Dienst, args []string) error {
 	}
 	switch args[0] {
 	case "annehmen":
-		return d.VorschlagAnnehmen(ctx, id)
+		ueberschreiben := len(args) > 2 && args[2] == "--ueberschreiben"
+		return d.VorschlagAnnehmen(ctx, id, ueberschreiben)
 	case "ablehnen":
 		return d.VorschlagAblehnen(ctx, id)
 	}
-	return fmt.Errorf("vorschlaege liste|annehmen|ablehnen <id>")
+	return fmt.Errorf("vorschlaege liste | annehmen <id> [--ueberschreiben] | ablehnen <id>")
 }
 
 func fehlend(ctx context.Context, d *dienst.Dienst, args []string) error {

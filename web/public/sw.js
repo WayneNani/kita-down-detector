@@ -2,8 +2,11 @@
 // - /assets/* (Dateinamen mit Hash): cache-first
 // - Seitenaufrufe: network-first, offline Rückfall auf die zuletzt geladene App-Hülle
 // - GET /api/v1/kitas/…: network-first mit Cache-Rückfall („Meine Kitas“ offline)
-// - Nie gecacht: POST, /api/v1/pow, /link, /berichtigung, /einladung
-const VERSION = 'v1';
+// - Nie gecacht: POST, /api/v1/pow, /link, /berichtigung, /einladung, /kitas/nahe (Standort)
+// VERSION und VORAB setzt der Build (vite.config.ts); so werden nach jedem
+// Deploy alte Caches gelöscht und alle Seiten-Chunks offline verfügbar.
+const VERSION = 'dev';
+const VORAB = [];
 const ASSETS = `assets-${VERSION}`;
 const SEITEN = `seiten-${VERSION}`;
 const API = `api-${VERSION}`;
@@ -13,6 +16,8 @@ self.addEventListener('install', (event) => {
     caches
       .open(SEITEN)
       .then((c) => c.addAll(['/', '/manifest.webmanifest', '/icon.svg']))
+      .then(() => caches.open(ASSETS))
+      .then((c) => c.addAll(VORAB))
       .catch(() => undefined)
       .then(() => self.skipWaiting()),
   );
@@ -27,17 +32,33 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-const NIE = [/^\/api\/v1\/pow\//, /^\/api\/v1\/link/, /^\/api\/v1\/berichtigung/, /^\/api\/v1\/einladung/];
+const NIE = [/^\/api\/v1\/pow\//, /^\/api\/v1\/link/, /^\/api\/v1\/berichtigung/, /^\/api\/v1\/einladung/, /^\/api\/v1\/kitas\/nahe/];
+const MAX_API_EINTRAEGE = 60;
 
-async function networkFirst(request, cacheName, fallbackUrl) {
+async function begrenzen(cache, max) {
+  const keys = await cache.keys();
+  for (let i = 0; i < keys.length - max; i++) await cache.delete(keys[i]);
+}
+
+/** Antwort aus dem Cache als solche kennzeichnen, damit die App „Stand: …“ zeigt. */
+async function alsCache(res) {
+  const h = new Headers(res.headers);
+  h.set('X-Aus-Cache', '1');
+  return new Response(await res.blob(), { status: res.status, statusText: res.statusText, headers: h });
+}
+
+async function networkFirst(request, cacheName, fallbackUrl, kennzeichnen) {
   const cache = await caches.open(cacheName);
   try {
     const res = await fetch(request);
-    if (res.ok) cache.put(request, res.clone());
+    if (res.ok) {
+      await cache.put(request, res.clone());
+      if (cacheName === API) begrenzen(cache, MAX_API_EINTRAEGE);
+    }
     return res;
   } catch (e) {
     const treffer = (await cache.match(request)) || (fallbackUrl && (await cache.match(fallbackUrl)));
-    if (treffer) return treffer;
+    if (treffer) return kennzeichnen ? alsCache(treffer) : treffer;
     throw e;
   }
 }
@@ -65,8 +86,8 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(cacheFirst(req));
   } else if (req.mode === 'navigate') {
     // Seiten aus Mail-Links (#token) laufen normal; offline zeigt die App-Hülle die Fehlermeldung.
-    event.respondWith(networkFirst(req, SEITEN, '/'));
+    event.respondWith(networkFirst(req, SEITEN, '/', false));
   } else if (p.startsWith('/api/v1/kitas/') || p === '/api/v1/info' || p === '/api/v1/status') {
-    event.respondWith(networkFirst(req, API));
+    event.respondWith(networkFirst(req, API, null, true));
   }
 });

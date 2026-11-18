@@ -1,10 +1,12 @@
-import { Link, Outlet } from 'react-router';
+import { Link, Outlet, useLocation } from 'react-router';
+import { Fehlergrenze } from './Fehlergrenze';
 import { Suspense } from 'react';
 import { Laden } from './Fehler';
 import { useOnline } from '../lib/online';
 
 export function Layout() {
   const online = useOnline();
+  const { pathname } = useLocation();
   return (
     <>
       <a className="skip" href="#inhalt">Zum Inhalt springen</a>
@@ -18,9 +20,11 @@ export function Layout() {
         {!online && <div className="offline-leiste" role="status">Sie sind offline – angezeigt wird der zuletzt geladene Stand.</div>}
       </header>
       <main id="inhalt" className="inhalt">
-        <Suspense fallback={<Laden />}>
-          <Outlet />
-        </Suspense>
+        <Fehlergrenze schluessel={pathname}>
+          <Suspense fallback={<Laden />}>
+            <Outlet />
+          </Suspense>
+        </Fehlergrenze>
       </main>
       <footer className="fuss">
         <nav aria-label="Weitere Informationen">

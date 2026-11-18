@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { api, ApiError, type MeldungInput, type S } from '../api/client';
-import { useInfo } from '../api/queries';
+import { useInfo, aktuellesHeute } from '../api/queries';
 import { MeldeFormular } from '../components/MeldeFormular';
 import { Erfolg, KitaUnterseite } from '../components/Seite';
 
@@ -49,7 +49,7 @@ export default function BerichtigungAnfragen() {
               Erst nach Bestätigung wird die Angabe übernommen und als „berichtigt durch Kita“ angezeigt. Sie hat Vorrang vor allen anderen
               Meldungen.
             </p>
-            <MeldeFormular heute={info.heute} grenzen={info} mitPow knopfText="Bestätigungslink anfordern" onSenden={senden} />
+            <MeldeFormular heute={aktuellesHeute(info.heute)} grenzen={info} mitPow knopfText="Bestätigungslink anfordern" onSenden={senden} />
           </>
         );
       }}

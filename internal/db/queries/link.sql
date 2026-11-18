@@ -5,6 +5,14 @@ VALUES ($1, $2, $3, $4, $5) RETURNING id;
 -- name: GetLinkNachHash :one
 SELECT * FROM melde_link WHERE token_hash = $1;
 
+-- name: LoescheMeldungenWiderrufenerLinks :many
+DELETE FROM meldung m
+WHERE m.kita_id = sqlc.arg(kita_id) AND m.link_id IN (
+  SELECT l.id FROM melde_link l WHERE l.kita_id = sqlc.arg(kita_id) AND l.widerrufen
+    AND (sqlc.narg(rolle)::text IS NULL OR l.rolle = sqlc.narg(rolle)::text)
+)
+RETURNING datum_von, datum_bis;
+
 -- name: WiderrufeLinks :execrows
 UPDATE melde_link SET widerrufen = true
 WHERE kita_id = sqlc.arg(kita_id) AND (sqlc.narg(rolle)::text IS NULL OR rolle = sqlc.narg(rolle)::text) AND NOT widerrufen;

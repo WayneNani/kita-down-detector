@@ -201,6 +201,45 @@ func (q *Queries) ListLinks(ctx context.Context, kitaID int64) ([]ListLinksRow, 
 	return items, nil
 }
 
+const loescheMeldungenWiderrufenerLinks = `-- name: LoescheMeldungenWiderrufenerLinks :many
+DELETE FROM meldung m
+WHERE m.kita_id = $1 AND m.link_id IN (
+  SELECT l.id FROM melde_link l WHERE l.kita_id = $1 AND l.widerrufen
+    AND ($2::text IS NULL OR l.rolle = $2::text)
+)
+RETURNING datum_von, datum_bis
+`
+
+type LoescheMeldungenWiderrufenerLinksParams struct {
+	KitaID int64
+	Rolle  *string
+}
+
+type LoescheMeldungenWiderrufenerLinksRow struct {
+	DatumVon time.Time
+	DatumBis time.Time
+}
+
+func (q *Queries) LoescheMeldungenWiderrufenerLinks(ctx context.Context, arg LoescheMeldungenWiderrufenerLinksParams) ([]LoescheMeldungenWiderrufenerLinksRow, error) {
+	rows, err := q.db.Query(ctx, loescheMeldungenWiderrufenerLinks, arg.KitaID, arg.Rolle)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LoescheMeldungenWiderrufenerLinksRow{}
+	for rows.Next() {
+		var i LoescheMeldungenWiderrufenerLinksRow
+		if err := rows.Scan(&i.DatumVon, &i.DatumBis); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const widerrufeLinks = `-- name: WiderrufeLinks :execrows
 UPDATE melde_link SET widerrufen = true
 WHERE kita_id = $1 AND ($2::text IS NULL OR rolle = $2::text) AND NOT widerrufen

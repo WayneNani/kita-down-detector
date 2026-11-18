@@ -3,15 +3,16 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, type KitaDetail, type MeldungInput, type TagesStatus } from '../api/client';
-import { schluessel, useInfo, useKita } from '../api/queries';
+import { aktuellesHeute, schluessel, useInfo, useKita } from '../api/queries';
 import { useFavoriten } from '../lib/favoriten';
 import { useToast } from '../lib/toast';
-import { datumLang, datumRelativ, istWochenende, uhrzeitAus } from '../lib/datum';
+import { datumLang, datumRelativ, heuteBerlin, istWochenende, uhrzeitAus } from '../lib/datum';
 import { STATUS_LABEL, STUFE_LABEL } from '../lib/texte';
 import { BottomSheet } from '../components/BottomSheet';
 import { MeldeFormular } from '../components/MeldeFormular';
 import { StatusBadge, StatusDetails, anzeigeFuer } from '../components/Status';
 import { useOhneMeldungAlsRegulaer } from '../lib/einstellungen';
+import { useOnline } from '../lib/online';
 import { AnsichtUmschalter } from '../components/AnsichtUmschalter';
 import { FehlerBox, Laden } from '../components/Fehler';
 import { IconPlus, IconStern, IconTeilen } from '../components/Icons';
@@ -28,6 +29,7 @@ export default function Kita() {
   const { info } = useInfo();
   const { istFavorit, umschalten } = useFavoriten();
   const [ohneMeldungAlsRegulaer] = useOhneMeldungAlsRegulaer();
+  const online = useOnline();
   const [sheet, setSheet] = useState(false);
   const qc = useQueryClient();
   const toast = useToast();
@@ -49,7 +51,14 @@ export default function Kita() {
     };
   }, [kita.data]);
 
+  if (!(Number.isInteger(id) && id > 0)) return <NichtGefunden />;
   if (kita.isError && kita.error instanceof ApiError && kita.error.status === 404) return <NichtGefunden />;
+  if (kita.isPending && !online)
+    return (
+      <div className="box box-fehler" role="alert">
+        Sie sind offline, und diese Kita wurde auf diesem Gerät noch nicht geladen. Bitte versuchen Sie es mit Verbindung erneut.
+      </div>
+    );
   if (kita.isPending) return <Laden />;
   if (!kita.data) return <FehlerBox fehler={kita.error} />;
 
@@ -107,9 +116,9 @@ export default function Kita() {
         </button>
       )}
 
-      <Stand aktualisiert={kita.dataUpdatedAt} />
+      <Stand aktualisiert={kita.dataUpdatedAt} daten={kita.data} fehlgeschlagen={kita.isRefetchError} />
 
-      {heute && <HeuteKarte heute={heute} annahme={ohneMeldungAlsRegulaer} />}
+      {heute && <HeuteKarte heute={heute} annahme={ohneMeldungAlsRegulaer} veraltet={heute.datum < heuteBerlin()} />}
 
       <section aria-labelledby="tage-titel">
         <h2 id="tage-titel">Nächste Tage</h2>
@@ -173,17 +182,18 @@ export default function Kita() {
       </div>
 
       <BottomSheet offen={sheet} onSchliessen={() => setSheet(false)} titel={`Meldung für ${k.name}`}>
-        <MeldeFormular heute={info.heute} grenzen={info} mitPow knopfText="Meldung absenden" onSenden={melden} />
+        <MeldeFormular heute={aktuellesHeute(info.heute)} grenzen={info} mitPow knopfText="Meldung absenden" onSenden={melden} />
       </BottomSheet>
     </div>
   );
 }
 
-function HeuteKarte({ heute, annahme }: { heute: TagesStatus; annahme: boolean }) {
+function HeuteKarte({ heute, annahme, veraltet }: { heute: TagesStatus; annahme: boolean; veraltet: boolean }) {
   const a = anzeigeFuer(heute, annahme);
   return (
     <section className={`heute-karte s-${a.status}${a.angenommen ? ' angenommen' : ''}`} aria-labelledby="heute-titel">
-      <h2 id="heute-titel">Heute, {datumLang(heute.datum).split(', ')[1]}</h2>
+      {/* Alte, zwischengespeicherte Daten nie als „Heute“ bezeichnen */}
+      <h2 id="heute-titel">{veraltet ? `Nicht aktuell – Stand für ${datumLang(heute.datum)}` : `Heute, ${datumLang(heute.datum).split(', ')[1]}`}</h2>
       <StatusBadge s={heute} gross annahme={annahme} />
       <StatusDetails s={heute} />
       {a.status === 'unbekannt' && <p className="hinweis">Keine Meldung heißt nicht automatisch reguläre Betreuung.</p>}

@@ -21,6 +21,12 @@ const STANDARD_INFO: Info = {
   heute: heuteBerlin(),
 };
 
+/** „Heute“ für Formulare: nie hinter dem aktuellen Kalendertag (z. B. kurz nach Mitternacht). */
+export function aktuellesHeute(infoHeute: string): string {
+  const jetzt = heuteBerlin();
+  return infoHeute > jetzt ? infoHeute : jetzt;
+}
+
 export function useInfo() {
   const q = useQuery({
     queryKey: schluessel.info,
@@ -35,7 +41,9 @@ export function useKita(id: number) {
     queryKey: schluessel.kita(id),
     queryFn: ({ signal }) => api<KitaDetail>(`/kitas/${id}`, { signal }),
     initialData: () => startDatenFuerKita(id),
-    initialDataUpdatedAt: () => Date.now(),
+    // Eingebettete Daten können aus einer zwischengespeicherten Seite stammen:
+    // sofort im Hintergrund neu laden statt sie als frisch zu behandeln.
+    initialDataUpdatedAt: 0,
     staleTime: 30_000,
     enabled: Number.isInteger(id) && id > 0,
   });

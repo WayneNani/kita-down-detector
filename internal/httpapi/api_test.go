@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -26,6 +27,7 @@ import (
 	"github.com/WayneNani/kita-down-detector/internal/db"
 	"github.com/WayneNani/kita-down-detector/internal/dienst"
 	"github.com/WayneNani/kita-down-detector/internal/domain"
+	"github.com/WayneNani/kita-down-detector/internal/mail"
 	"github.com/WayneNani/kita-down-detector/internal/pow"
 	"github.com/WayneNani/kita-down-detector/internal/privacy"
 	"github.com/WayneNani/kita-down-detector/internal/testdb"
@@ -34,14 +36,15 @@ import (
 var jetzt = time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC) // Mi, 18.11.2026
 
 type umgebung struct {
-	t     *testing.T
-	pool  *pgxpool.Pool
-	d     *dienst.Dienst
-	h     http.Handler
-	ip    string
-	jetzt time.Time
-	kita1 int64 // mit Kontaktadresse
-	kita2 int64 // ohne Kontaktadresse
+	t         *testing.T
+	pool      *pgxpool.Pool
+	d         *dienst.Dienst
+	h         http.Handler
+	ip        string
+	uaWechsel string
+	jetzt     time.Time
+	kita1     int64 // mit Kontaktadresse
+	kita2     int64 // ohne Kontaktadresse
 }
 
 var gemeinsamerPool *pgxpool.Pool
@@ -119,7 +122,7 @@ func (u *umgebung) anfrage(methode, pfad string, body any, hdr ...string) antwor
 	}
 	req := httptest.NewRequest(methode, pfad, r)
 	req.RemoteAddr = u.ip + ":12345"
-	req.Header.Set("User-Agent", "Testbrowser")
+	req.Header.Set("User-Agent", "Testbrowser"+u.uaWechsel)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -382,7 +385,7 @@ func TestBerichtigung(t *testing.T) {
 	m := meldung("notbetreuung", "2026-11-18")
 	m["altcha"] = u.altcha()
 	a := u.anfrage("POST", "/api/v1/kitas/"+itoa(u.kita1)+"/berichtigungen", m)
-	if a.code != 202 || !strings.Contains(string(a.body), "k***@bonn.de") {
+	if a.code != 202 || !strings.Contains(string(a.body), `"***@bonn.de"`) {
 		t.Fatalf("%d %s", a.code, a.body)
 	}
 	mails := u.mails()
@@ -431,13 +434,16 @@ func TestEinladungMitKontakt(t *testing.T) {
 		t.Fatalf("%d %s", a.code, a.body)
 	}
 	mails := u.mails()
-	if len(mails) != 1 || mails[0].An != "kita.sonnenschein@bonn.de" {
-		t.Fatalf("%+v", mails)
+	if len(mails) != 1 || mails[0].An != "kita.sonnenschein@bonn.de" || !strings.Contains(mails[0].Text, "elternbeirat@example.org") {
+		t.Fatalf("Kita muss sehen, wer anfragt: %+v", mails)
 	}
 	et := tokenAus(t, mails[0].Text, "einladung")
 	auth := []string{"Authorization", "Einladung " + et}
-	if a := u.anfrage("GET", "/api/v1/einladung", nil, auth...); a.code != 200 {
-		t.Fatalf("Info: %d", a.code)
+	if a := u.anfrage("GET", "/api/v1/einladung", nil, auth...); a.code != 200 || !strings.Contains(string(a.body), `"angefragt_von":"elternbeirat@example.org"`) {
+		t.Fatalf("Info: %d %s", a.code, a.body)
+	}
+	if a := u.anfrage("POST", "/api/v1/einladung/bestaetigen", nil, "Authorization", "Einladung falsch"); a.code != 401 {
+		t.Fatalf("falsches Token ohne Body: %d", a.code)
 	}
 	if a := u.anfrage("POST", "/api/v1/einladung/bestaetigen", map[string]any{"kita_link": true}, auth...); a.code != 200 {
 		t.Fatalf("bestätigen: %d %s", a.code, a.body)
@@ -470,6 +476,7 @@ func TestEinladungOhneKontaktMitPruefung(t *testing.T) {
 	if a := u.anfrage("POST", "/api/v1/kitas/"+itoa(u.kita2)+"/einladungen", body); a.code != 422 {
 		t.Fatalf("persönliche Adresse: %d", a.code)
 	}
+	u.ip = "198.51.100.31" // je Anschluss nur 2 Anfragen pro Kita und Tag
 	body = map[string]any{"email": "eb@example.org", "kita_email": "kita-loewenzahn@traeger.de", "altcha": u.altcha()}
 	a := u.anfrage("POST", "/api/v1/kitas/"+itoa(u.kita2)+"/einladungen", body)
 	if a.code != 202 || !strings.Contains(string(a.body), "pruefung") || len(u.mails()) != 0 {
@@ -479,7 +486,7 @@ func TestEinladungOhneKontaktMitPruefung(t *testing.T) {
 	if len(vs) != 1 {
 		t.Fatalf("Vorschläge: %+v", vs)
 	}
-	if err := u.d.VorschlagAnnehmen(context.Background(), vs[0].ID); err != nil {
+	if err := u.d.VorschlagAnnehmen(context.Background(), vs[0].ID, false); err != nil {
 		t.Fatal(err)
 	}
 	mails := u.mails()
@@ -491,13 +498,141 @@ func TestEinladungOhneKontaktMitPruefung(t *testing.T) {
 	}
 }
 
-func TestEinladungVertrauteDomainOhnePruefung(t *testing.T) {
+// Review-Fund: Adressen auf „vertrauten“ Domains wurden ungeprüft übernommen.
+func TestVertrauteDomainUebernimmtNieAutomatisch(t *testing.T) {
 	u := neu(t)
 	body := map[string]any{"email": "eb@example.org", "kita_email": "kita-loewenzahn@stadt-koeln.de", "altcha": u.altcha()}
 	a := u.anfrage("POST", "/api/v1/kitas/"+itoa(u.kita2)+"/einladungen", body)
-	if a.code != 202 || !strings.Contains(string(a.body), `"gesendet"`) {
+	if a.code != 202 || !strings.Contains(string(a.body), `"pruefung"`) || len(u.mails()) != 0 {
 		t.Fatalf("%d %s", a.code, a.body)
 	}
+	u.ip = "198.51.100.30"
+	a = u.anfrage("POST", "/api/v1/kitas/"+itoa(u.kita2)+"/kontakt-vorschlaege", map[string]any{"email": "kita-angreifer@stadt-koeln.de", "altcha": u.altcha()})
+	if a.code != 202 || len(u.mails()) != 0 {
+		t.Fatalf("Vorschlag: %d, Mails: %d", a.code, len(u.mails()))
+	}
+	if d := u.detail(u.kita2); d.KontaktBekannt {
+		t.Fatal("Adresse darf ohne Prüfung nicht übernommen werden")
+	}
+}
+
+func TestBestaetigteAdresseWirdNichtErsetzt(t *testing.T) {
+	u := neu(t)
+	ctx := context.Background()
+	u.d.Q.KontaktBestaetigen(ctx, db.KontaktBestaetigenParams{KitaID: u.kita1, BestaetigtAm: &u.jetzt})
+	a := u.anfrage("POST", "/api/v1/kitas/"+itoa(u.kita1)+"/kontakt-vorschlaege", map[string]any{"email": "kita-neu@bonn.de", "altcha": u.altcha()})
+	if a.code != 422 {
+		t.Fatalf("Vorschlag für bestätigte Kita: %d", a.code)
+	}
+	// Auch die Verwaltung muss das Überschreiben ausdrücklich wollen
+	id, _ := u.d.Q.InsertVorschlag(ctx, db.InsertVorschlagParams{KitaID: u.kita1, Email: "kita-neu@bonn.de", Anlass: "kita", ErstelltAm: u.jetzt})
+	if err := u.d.VorschlagAnnehmen(ctx, id, false); err == nil {
+		t.Fatal("bestätigte Adresse ohne --ueberschreiben ersetzt")
+	}
+	if err := u.d.VorschlagAnnehmen(ctx, id, true); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEinMenschIstKeineZweiMeldenden(t *testing.T) {
+	u := neu(t)
+	ua := func(name string) func(*http.Request) {
+		return func(r *http.Request) { r.Header.Set("User-Agent", name) }
+	}
+	_ = ua
+	u.melde(u.kita1, meldung("geschlossen", "2026-11-18"))
+	u.uaWechsel = "Anderer Browser"
+	u.melde(u.kita1, meldung("geschlossen", "2026-11-18"))
+	if d := u.detail(u.kita1); d.Tage[0].Stufe != int(domain.StufeUnbestaetigt) {
+		t.Fatalf("anderer User-Agent darf nicht als zweite Person zählen: %+v", d.Tage[0])
+	}
+	// gleicher Haushalt (gleiches IPv6-/56), andere Privacy-Extension-Adresse
+	u.ip = "2001:db8:1:2::1"
+	u.melde(u.kita2, meldung("geschlossen", "2026-11-18"))
+	u.ip = "2001:db8:1:3::99"
+	u.melde(u.kita2, meldung("geschlossen", "2026-11-18"))
+	if d := u.detail(u.kita2); d.Tage[0].Stufe != int(domain.StufeUnbestaetigt) {
+		t.Fatalf("gleiches /56 zählt doppelt: %+v", d.Tage[0])
+	}
+}
+
+func TestLinkWiderrufenMitMeldungen(t *testing.T) {
+	u := neu(t)
+	ctx := context.Background()
+	token, _, _ := u.d.ErstelleLink(ctx, nil, u.kita1, domain.RolleElternbeirat, nil)
+	u.anfrage("POST", "/api/v1/link/meldungen", meldung("geschlossen", "2026-11-18", "datum_bis", "2026-11-25"), "Authorization", "Link "+token)
+	if d := u.detail(u.kita1); d.Tage[0].Stufe != int(domain.StufeElternbeirat) {
+		t.Fatalf("%+v", d.Tage[0])
+	}
+	n, entfernt, err := u.d.LinksWiderrufen(ctx, u.kita1, nil, true)
+	if err != nil || n != 1 || entfernt != 1 {
+		t.Fatalf("%d %d %v", n, entfernt, err)
+	}
+	if d := u.detail(u.kita1); d.Tage[0].Status != "unbekannt" || d.Tage[7].Status != "unbekannt" {
+		t.Fatalf("Status nicht neu berechnet: %+v", d.Tage[0])
+	}
+}
+
+func TestInaktiveKitaNimmtKeineMeldungen(t *testing.T) {
+	u := neu(t)
+	u.pool.Exec(context.Background(), "UPDATE kita SET aktiv = false WHERE id = $1", u.kita1)
+	if a := u.melde(u.kita1, meldung("geschlossen", "2026-11-18")); a.code != 404 {
+		t.Fatalf("%d", a.code)
+	}
+}
+
+func TestBerichtigungKontingentProAnschluss(t *testing.T) {
+	u := neu(t)
+	anfrage := func(status string) int {
+		m := meldung(status, "2026-11-18")
+		m["altcha"] = u.altcha()
+		return u.anfrage("POST", "/api/v1/kitas/"+itoa(u.kita1)+"/berichtigungen", m).code
+	}
+	if c := anfrage("regulaer"); c != 202 {
+		t.Fatal(c)
+	}
+	if c := anfrage("regulaer"); c != 202 || len(u.mails()) != 1 {
+		t.Fatalf("gleiche offene Anfrage darf keine zweite Mail auslösen: %d, %d Mails", c, len(u.mails()))
+	}
+	if c := anfrage("notbetreuung"); c != 429 {
+		t.Fatalf("drittes Mal vom selben Anschluss: %d", c)
+	}
+	u.ip = "198.51.100.77"
+	if c := anfrage("notbetreuung"); c != 202 {
+		t.Fatalf("anderer Anschluss: %d", c)
+	}
+}
+
+func TestMailOutboxVersendetUndLoescht(t *testing.T) {
+	u := neu(t)
+	m := meldung("regulaer", "2026-11-18")
+	m["altcha"] = u.altcha()
+	u.anfrage("POST", "/api/v1/kitas/"+itoa(u.kita1)+"/berichtigungen", m)
+	fehler := &zaehlSender{fehler: true}
+	if n, err := u.d.MailsVersenden(context.Background(), fehler, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil || n != 0 || fehler.n != 1 {
+		t.Fatalf("%d %v", n, err)
+	}
+	if len(u.mails()) != 1 {
+		t.Fatal("fehlgeschlagene Mail muss bleiben")
+	}
+	u.pool.Exec(context.Background(), "UPDATE mail_outbox SET naechster_versuch = now()")
+	ok := &zaehlSender{}
+	if n, err := u.d.MailsVersenden(context.Background(), ok, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil || n != 1 || len(u.mails()) != 0 {
+		t.Fatalf("%d %v", n, err)
+	}
+}
+
+type zaehlSender struct {
+	n      int
+	fehler bool
+}
+
+func (z *zaehlSender) Senden(context.Context, mail.Mail) error {
+	z.n++
+	if z.fehler {
+		return errors.New("550 rejected: someone@example.org")
+	}
+	return nil
 }
 
 func TestKontaktVorschlagUndFehlendeKita(t *testing.T) {
@@ -509,13 +644,14 @@ func TestKontaktVorschlagUndFehlendeKita(t *testing.T) {
 		t.Fatalf("%d", a.code)
 	}
 	vs, _ := u.d.Q.ListVorschlaege(context.Background())
-	if err := u.d.VorschlagAnnehmen(context.Background(), vs[0].ID); err != nil {
+	if err := u.d.VorschlagAnnehmen(context.Background(), vs[0].ID, false); err != nil {
 		t.Fatal(err)
 	}
 	mails := u.mails()
 	if len(mails) != 1 || !strings.Contains(mails[0].Text, "/m#") {
 		t.Fatalf("Kita-Link erwartet: %+v", mails)
 	}
+	u.ip = "198.51.100.32"
 	if a := u.anfrage("POST", "/api/v1/kitas/fehlend", map[string]any{"name": "Kita Neu", "strasse": "Weg 1", "plz": "531", "ort": "Bonn", "altcha": u.altcha()}); a.code != 422 {
 		t.Fatalf("PLZ: %d", a.code)
 	}

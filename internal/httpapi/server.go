@@ -30,16 +30,22 @@ type Server struct {
 	limitLesen     *limiter
 	limitChallenge *limiter
 	limitSchreiben *limiter
+	// je Anschluss und Kita: Berichtigungen, Einladungen, Adressvorschläge –
+	// damit niemand allein das Tageskontingent einer Kita aufbrauchen kann
+	limitKitaAnfragen *limiter
+	limitFehlend      *limiter
 }
 
 func Neu(d *dienst.Dienst, p *pow.ProofOfWork, g *privacy.Tagesgeheimnis, frontend fs.FS, log *slog.Logger) *Server {
 	return &Server{
 		d: d, pow: p, geheimnis: g, log: log,
-		spa:            neuesSPA(frontend, d, log),
-		origin:         d.Cfg.BaseURL,
-		limitLesen:     neuerLimiter(600, time.Minute),
-		limitChallenge: neuerLimiter(30, time.Minute),
-		limitSchreiben: neuerLimiter(30, time.Hour),
+		spa:               neuesSPA(frontend, d, log),
+		origin:            d.Cfg.BaseURL,
+		limitLesen:        neuerLimiter(600, time.Minute),
+		limitChallenge:    neuerLimiter(30, time.Minute),
+		limitSchreiben:    neuerLimiter(30, time.Hour),
+		limitKitaAnfragen: neuerLimiter(2, 24*time.Hour),
+		limitFehlend:      neuerLimiter(5, 24*time.Hour),
 	}
 }
 
@@ -177,6 +183,16 @@ func (s *Server) vertraut(ip netip.Addr) bool {
 		}
 	}
 	return false
+}
+
+// proKita begrenzt Anfragen je Anschluss, Art und Kita.
+func (s *Server) proKita(w http.ResponseWriter, r *http.Request, art string, id int64) bool {
+	schluessel := s.geheimnis.LimitSchluessel(s.clientIP(r)) + "|" + art + "|" + strconv.FormatInt(id, 10)
+	if !s.limitKitaAnfragen.erlaubt(schluessel, s.d.Jetzt()) {
+		schreibeProblem(w, http.StatusTooManyRequests, "Sie haben für diese Kita heute bereits Anfragen gestellt. Bitte nutzen Sie die zuletzt gesendete Mail oder versuchen Sie es morgen.")
+		return false
+	}
+	return true
 }
 
 func cacheOeffentlich(w http.ResponseWriter) {
@@ -355,7 +371,7 @@ func (s *Server) anonymMelden(w http.ResponseWriter, r *http.Request) {
 		s.fehlerAntwort(w, r, err)
 		return
 	}
-	hash := s.geheimnis.MelderHash(s.clientIP(r), r.UserAgent(), id)
+	hash := s.geheimnis.MelderHash(s.clientIP(r), id)
 	if err := s.d.SpeichereMeldung(r.Context(), id, m, dienst.Herkunft{Quelle: domain.QuelleAnonym, MelderHash: hash}); err != nil {
 		s.fehlerAntwort(w, r, err)
 		return
@@ -424,6 +440,9 @@ func (s *Server) berichtigungAnfragen(w http.ResponseWriter, r *http.Request) {
 		s.fehlerAntwort(w, r, err)
 		return
 	}
+	if !s.proKita(w, r, "berichtigung", id) {
+		return
+	}
 	an, err := s.d.BerichtigungAnfragen(r.Context(), id, m)
 	if err != nil {
 		s.fehlerAntwort(w, r, err)
@@ -468,7 +487,7 @@ func (s *Server) einladungAnfragen(w http.ResponseWriter, r *http.Request) {
 		KitaEmail *string `json:"kita_email"`
 		Altcha    string  `json:"altcha"`
 	}
-	if !leseJSON(w, r, &in) || !s.powOK(w, r, in.Altcha) {
+	if !leseJSON(w, r, &in) || !s.powOK(w, r, in.Altcha) || !s.proKita(w, r, "einladung", id) {
 		return
 	}
 	erg, err := s.d.EinladungAnfragen(r.Context(), id, in.Email, in.KitaEmail)
@@ -493,11 +512,17 @@ func (s *Server) einladungInfo(w http.ResponseWriter, r *http.Request) {
 	k := e.Kita
 	schreibeJSON(w, http.StatusOK, map[string]any{
 		"kita": dienst.KitaKurz{ID: k.ID, Name: k.Name, Traeger: k.Traeger, Strasse: k.Strasse, Plz: k.Plz, Ort: k.Ort, Lat: k.Lat, Lon: k.Lon},
+		// Die Kita soll erkennen können, wer anfragt (der Elternbeirat wird darauf hingewiesen).
+		"angefragt_von": e.Einladung.EbEmail,
 	})
 }
 
 func (s *Server) einladungBestaetigen(w http.ResponseWriter, r *http.Request) {
 	keinCache(w)
+	if _, err := s.d.FindeEinladung(r.Context(), token(r, "Einladung")); err != nil {
+		s.fehlerAntwort(w, r, err)
+		return
+	}
 	var in struct {
 		KitaLink bool `json:"kita_link"`
 	}
@@ -522,7 +547,7 @@ func (s *Server) kontaktVorschlag(w http.ResponseWriter, r *http.Request) {
 		Email  string `json:"email"`
 		Altcha string `json:"altcha"`
 	}
-	if !leseJSON(w, r, &in) || !s.powOK(w, r, in.Altcha) {
+	if !leseJSON(w, r, &in) || !s.powOK(w, r, in.Altcha) || !s.proKita(w, r, "kontakt", id) {
 		return
 	}
 	if err := s.d.KontaktVorschlagen(r.Context(), id, in.Email); err != nil {
@@ -539,6 +564,10 @@ func (s *Server) fehlend(w http.ResponseWriter, r *http.Request) {
 		Altcha string `json:"altcha"`
 	}
 	if !leseJSON(w, r, &in) || !s.powOK(w, r, in.Altcha) {
+		return
+	}
+	if !s.limitFehlend.erlaubt(s.geheimnis.LimitSchluessel(s.clientIP(r)), s.d.Jetzt()) {
+		schreibeProblem(w, http.StatusTooManyRequests, "Zu viele Meldungen. Bitte versuchen Sie es morgen erneut.")
 		return
 	}
 	if err := s.d.FehlendeKitaMelden(r.Context(), in.FehlendeKita); err != nil {

@@ -17,6 +17,9 @@ type Meldung struct {
 	Grund      *string
 	Quelle     domain.Quelle
 	MelderHash []byte
+	// Tag der Meldung. Melder-Hashes gelten nur innerhalb eines Tages (der
+	// Schlüssel wechselt täglich) – unabhängige Meldende zählen wir daher je Tag.
+	ErstelltAm time.Time
 }
 
 type Tag struct {
@@ -40,11 +43,15 @@ func aus(m Meldung, d time.Time, stufe domain.Stufe, anzahl int) Tag {
 
 // Berechne bestimmt den Status für Tag d:
 //
-//  1. Gibt es verifizierte Meldungen (Link, Berichtigung), gewinnt die höchste
-//     Stufe, bei Gleichstand die neueste.
+//  1. Gibt es verifizierte Meldungen (Link, Berichtigung), gewinnt der höchste
+//     Rang, bei Gleichstand die neueste. Kita-Link und Berichtigung kommen beide
+//     von der Kita und haben denselben Rang – so kann die Kita eine eigene
+//     Berichtigung später per Link wieder ändern.
 //  2. Sonst zählen anonyme Meldungen: Der Status mit den meisten unabhängigen
-//     Meldenden gewinnt (Gleichstand: neueste Meldung). Ab `schwelle`
-//     unabhängigen Meldungen gilt er als bestätigt.
+//     Meldenden gewinnt (Gleichstand: neueste Meldung). Unabhängig heißt:
+//     verschiedene Melder-Hashes am selben Meldetag – über Tage hinweg lassen
+//     sich Hashes nicht vergleichen, daher zählt der stärkste Tag. Ab `schwelle`
+//     gilt der Status als bestätigt.
 func Berechne(meldungen []Meldung, d time.Time, schwelle int) Tag {
 	var relevant []Meldung
 	for _, m := range meldungen {
@@ -57,35 +64,42 @@ func Berechne(meldungen []Meldung, d time.Time, schwelle int) Tag {
 	}
 
 	var best *Meldung
-	var bestStufe domain.Stufe
+	var bestRang domain.Stufe
 	for i := range relevant {
 		m := &relevant[i]
 		if m.Quelle == domain.QuelleAnonym {
 			continue
 		}
-		s := m.Quelle.Stufe()
-		if best == nil || s > bestStufe || (s == bestStufe && m.ID > best.ID) {
-			best, bestStufe = m, s
+		r := rang(m.Quelle)
+		if best == nil || r > bestRang || (r == bestRang && m.ID > best.ID) {
+			best, bestRang = m, r
 		}
 	}
 	if best != nil {
-		return aus(*best, d, bestStufe, 0)
+		return aus(*best, d, best.Quelle.Stufe(), 0)
 	}
 
 	type gruppe struct {
-		melder  map[string]struct{}
-		neueste Meldung
+		melderJeTag map[time.Time]map[string]struct{}
+		neueste     Meldung
+		anzahl      int
 	}
 	gruppen := map[domain.Status]*gruppe{}
 	var reihenfolge []domain.Status
 	for _, m := range relevant {
 		g, ok := gruppen[m.Status]
 		if !ok {
-			g = &gruppe{melder: map[string]struct{}{}, neueste: m}
+			g = &gruppe{melderJeTag: map[time.Time]map[string]struct{}{}, neueste: m}
 			gruppen[m.Status] = g
 			reihenfolge = append(reihenfolge, m.Status)
 		}
-		g.melder[string(m.MelderHash)] = struct{}{}
+		tag := g.melderJeTag[m.ErstelltAm]
+		if tag == nil {
+			tag = map[string]struct{}{}
+			g.melderJeTag[m.ErstelltAm] = tag
+		}
+		tag[string(m.MelderHash)] = struct{}{}
+		g.anzahl = max(g.anzahl, len(tag))
 		if m.ID > g.neueste.ID {
 			g.neueste = m
 		}
@@ -93,16 +107,23 @@ func Berechne(meldungen []Meldung, d time.Time, schwelle int) Tag {
 	var sieger *gruppe
 	for _, s := range reihenfolge {
 		g := gruppen[s]
-		if sieger == nil || len(g.melder) > len(sieger.melder) ||
-			(len(g.melder) == len(sieger.melder) && g.neueste.ID > sieger.neueste.ID) {
+		if sieger == nil || g.anzahl > sieger.anzahl || (g.anzahl == sieger.anzahl && g.neueste.ID > sieger.neueste.ID) {
 			sieger = g
 		}
 	}
 	stufe := domain.StufeUnbestaetigt
-	if len(sieger.melder) >= schwelle {
+	if sieger.anzahl >= schwelle {
 		stufe = domain.StufeBestaetigt
 	}
-	return aus(sieger.neueste, d, stufe, len(sieger.melder))
+	return aus(sieger.neueste, d, stufe, sieger.anzahl)
+}
+
+// rang: Reihenfolge verifizierter Quellen. Kita-Link und Berichtigung sind gleichrangig.
+func rang(q domain.Quelle) domain.Stufe {
+	if q == domain.QuelleBerichtigung {
+		return domain.StufeKita
+	}
+	return q.Stufe()
 }
 
 // Gleich prüft, ob sich zwei Anzeigen unterscheiden (für Änderungsprotokoll und Upsert).

@@ -16,8 +16,9 @@ export default function Datenschutz() {
         </li>
         <li>Kein Freitext, keine Namen, keine Konten, keine Cookies, kein Tracking, keine externen Dienste oder Schriftarten.</li>
         <li>
-          <strong>Keine IP-Adressen.</strong> Um Mehrfachmeldungen zu erkennen, bilden wir aus Verbindungsdaten und Kita einen Hash mit einem
-          Tagesschlüssel, der nur im Arbeitsspeicher liegt und täglich verworfen wird. Danach kann niemand – auch wir nicht – den Hash einer Person
+          <strong>Keine IP-Adressen.</strong> Um Mehrfachmeldungen zu erkennen, bilden wir aus Ihrem Internet-Anschluss (IP-Adresse, bei IPv6 nur der
+          Anschluss-Teil) und der Kita einen Hash mit einem Tagesschlüssel, der nur im Arbeitsspeicher liegt und täglich verworfen wird. Mehrere Personen
+          am selben Anschluss zählen deshalb als eine Meldung. Danach kann niemand – auch wir nicht – den Hash einer Person
           zuordnen.
         </li>
         <li>
@@ -71,7 +72,10 @@ export default function Datenschutz() {
       <h2>Kontaktadressen der Kitas</h2>
       <p>
         Wir speichern nur allgemeine Funktionsadressen von Einrichtungen (keine persönlichen Adressen). Sie werden nie veröffentlicht und nur für
-        Berichtigungen, Bestätigungen und Melde-Links genutzt. Die Adresse eines Elternbeirats speichern wir nur, bis der Link versendet ist.
+        Berichtigungen, Bestätigungen und Melde-Links genutzt. Neue Adressen prüfen wir von Hand, bevor wir sie verwenden. Die Adresse eines
+        Elternbeirats zeigen wir der Kita in der Bestätigungsanfrage, damit sie die Anfrage zuordnen kann, und speichern sie nur, bis der Link
+        versendet ist (höchstens 30 Tage, wenn die Anfrage unbeantwortet bleibt). Ausgehende Mails liegen bis zum Versand in einer
+        Warteschlange. Verschlüsselte Datensicherungen bewahren wir 14 Tage auf; danach sind gelöschte Daten auch dort entfernt.
       </p>
 
       <h2>Berichtigung und Kontakt</h2>

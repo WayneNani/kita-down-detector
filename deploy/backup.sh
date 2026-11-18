@@ -1,9 +1,9 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Nächtliches, verschlüsseltes Backup (per Cron auf der VM, z. B. 3:17 Uhr):
 #   17 3 * * * /opt/kita-ausfall/deploy/backup.sh
 # Voraussetzungen: age (https://age-encryption.org) und rclone mit einem Ziel „backup:“
 # in der EU. Aufbewahrung 14 Tage, damit Löschfristen auch in Backups greifen.
-set -eu
+set -euo pipefail  # bricht ab, wenn pg_dump fehlschlägt – sonst würde ein leeres Backup hochgeladen
 cd "$(dirname "$0")"
 : "${AGE_RECIPIENT:?öffentlichen age-Schlüssel in AGE_RECIPIENT setzen}"
 DATEI="kita-$(date +%Y-%m-%d).sql.gz.age"

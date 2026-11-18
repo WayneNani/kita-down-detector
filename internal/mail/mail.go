@@ -5,6 +5,7 @@ package mail
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -28,6 +29,18 @@ type LogSender struct{ Log *slog.Logger }
 func (s LogSender) Senden(_ context.Context, m Mail) error {
 	fmt.Printf("\n--- Mail an %s ---\nBetreff: %s\n\n%s\n---\n", m.An, m.Betreff, m.Text)
 	return nil
+}
+
+// Fehlergrund beschreibt einen Versandfehler ohne Empfängeradressen (für Logs).
+func Fehlergrund(err error) string {
+	var se *gomail.SendError
+	if errors.As(err, &se) {
+		return fmt.Sprintf("%s (Code %d, %s, vorübergehend: %v)", se.Reason, se.ErrorCode(), se.EnhancedStatusCode(), se.IsTemp())
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "abgebrochen/Zeitüberschreitung"
+	}
+	return "Verbindungs- oder Konfigurationsfehler"
 }
 
 type SMTPSender struct {

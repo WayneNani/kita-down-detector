@@ -68,7 +68,8 @@ bin/kita-ausfall import --quelle koeln --datei kitas-koeln.json --modus primaer 
 ```
 
 - `--modus primaer`: maßgebliches Verzeichnis (Landesdatensatz, oder zum Start Bonn/Köln) – legt Kitas an, aktualisiert sie, blendet verschwundene aus.
-- `--modus ergaenzung`: gleicht nur ab (Adresse + Namensähnlichkeit), ergänzt Koordinaten, Träger und Kontaktadressen; Unklares landet in `kita-ausfall zuordnung liste`.
+- `--modus ergaenzung`: gleicht nur ab (gleiche Adresse + ähnlicher Name), ergänzt fehlende Koordinaten, Träger und Kontaktadressen; ändert weder Name/Adresse noch „aktiv“. Unklares landet in `kita-ausfall zuordnung liste`.
+- Doppelte IDs in einer Datei und ungültige Koordinaten (z. B. `0;0`) werden übersprungen bzw. verworfen und gezählt, statt den Import abzubrechen.
 - Koordinaten in WGS84 oder UTM 32N (EPSG:25832) werden automatisch erkannt; CSV in UTF-8 oder Windows-1252.
 - Persönlich aussehende E-Mail-Adressen (`vorname.nachname@`) werden verworfen.
 
@@ -83,9 +84,9 @@ bin/kita-ausfall import --quelle osm --datei osm.json --modus ergaenzung --herku
 
 ```sh
 kita-ausfall link erstellen --kita 12 --rolle elternbeirat     # Link wird einmal angezeigt
-kita-ausfall link widerrufen --kita 12 [--rolle kita]
+kita-ausfall link widerrufen --kita 12 [--rolle kita] [--meldungen-entfernen]
 kita-ausfall kontakt setzen --kita 12 --email kita-xy@stadt.de
-kita-ausfall vorschlaege liste | annehmen <id> | ablehnen <id>  # von Nutzer:innen vorgeschlagene Kita-Adressen
+kita-ausfall vorschlaege liste | annehmen <id> [--ueberschreiben] | ablehnen <id>  # vorgeschlagene Kita-Adressen (immer manuell prüfen)
 kita-ausfall fehlend liste | annehmen <id> | ablehnen <id>      # gemeldete fehlende Kitas
 kita-ausfall aufraeumen                                         # Löschfristen (läuft im Server stündlich)
 ```
@@ -105,7 +106,7 @@ kita-ausfall aufraeumen                                         # Löschfristen 
 | `MAX_MELDUNGEN_PRO_TAG` | `3` | Anonyme Meldungen je Gerät, Kita und Tag |
 | `AUFBEWAHRUNG_TAGE` | `180` | Löschfrist für Einzelmeldungen |
 | `TRUSTED_PROXY_CIDRS` | – | Netze, deren `X-Forwarded-For` vertraut wird |
-| `VERTRAUTE_DOMAINS` | – | Träger-Domains, deren Kita-Adressen ohne manuelle Prüfung gelten |
+| `VERTRAUTE_DOMAINS` | – | Träger-Domains; nur als Hinweis in `vorschlaege liste` – Adressen werden nie automatisch übernommen |
 | `SMTP_URL` | – | `smtps://user:pass@host:465` oder `smtp://…:587` (STARTTLS); Pflicht in Produktion |
 | `MAIL_FROM` / `KONTAKT_EMAIL` | | Absender / Kontakt der Betreibenden |
 

@@ -53,11 +53,14 @@ func (t *Tagesgeheimnis) mac(teile ...[]byte) []byte {
 	return h.Sum(nil)
 }
 
-// MelderHash kennzeichnet ein Gerät für eine Kita an einem Tag.
-func (t *Tagesgeheimnis) MelderHash(ip netip.Addr, userAgent string, kitaID int64) []byte {
+// MelderHash kennzeichnet einen Anschluss für eine Kita an einem Tag.
+// Bewusst ohne User-Agent: Den kann jede:r frei wählen und sich so als
+// „weitere Person“ ausgeben. Eltern hinter demselben Anschluss zählen dafür
+// nur einmal – lieber zu vorsichtig bestätigen als zu leicht.
+func (t *Tagesgeheimnis) MelderHash(ip netip.Addr, kitaID int64) []byte {
 	var id [8]byte
 	binary.BigEndian.PutUint64(id[:], uint64(kitaID))
-	return t.mac([]byte("melder"), []byte(IPPraefix(ip)), []byte(userAgent), id[:])[:16]
+	return t.mac([]byte("melder"), []byte(IPPraefix(ip)), id[:])[:16]
 }
 
 // LimitSchluessel kennzeichnet einen Anschluss für Rate-Limits (nur im RAM).
@@ -65,12 +68,13 @@ func (t *Tagesgeheimnis) LimitSchluessel(ip netip.Addr) string {
 	return string(t.mac([]byte("limit"), []byte(IPPraefix(ip)))[:16])
 }
 
-// IPPraefix: IPv4 vollständig, IPv6 auf /64 gekürzt (Privacy Extensions
-// wechseln die hinteren 64 Bit regelmäßig).
+// IPPraefix: IPv4 vollständig, IPv6 auf /56 gekürzt. Privacy Extensions
+// wechseln die hinteren 64 Bit; Haushalte bekommen in Deutschland meist ein /56,
+// so dass ein Anschluss nicht 256 verschiedene Kennungen erzeugen kann.
 func IPPraefix(ip netip.Addr) string {
 	ip = ip.Unmap()
 	if ip.Is6() {
-		p, err := ip.Prefix(64)
+		p, err := ip.Prefix(56)
 		if err == nil {
 			return p.String()
 		}
@@ -95,14 +99,13 @@ func TokenHash(token string) []byte {
 	return h[:]
 }
 
-// MaskiereEmail: k***@stadt.de
+// MaskiereEmail: ***@stadt.de – zeigt nur die Domain, nichts von der Adresse selbst.
 func MaskiereEmail(email string) string {
-	lokal, domain, ok := strings.Cut(email, "@")
-	if !ok || lokal == "" {
+	_, domain, ok := strings.Cut(email, "@")
+	if !ok || domain == "" {
 		return "***"
 	}
-	r := []rune(lokal)
-	return string(r[0]) + "***@" + domain
+	return "***@" + domain
 }
 
 var emailRe = regexp.MustCompile(`^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$`)
@@ -117,20 +120,31 @@ func NormalisiereEmail(s string) (string, bool) {
 }
 
 var (
-	personRe   = regexp.MustCompile(`^[a-zäöüß]+[._-][a-zäöüß]+(?:[._-][a-zäöüß]+)?$`)
+	personRe   = regexp.MustCompile(`^[a-zäöüß]+[._-][a-zäöüß]+(?:[._-][a-zäöüß]+)?[0-9]*$`)
 	initialRe  = regexp.MustCompile(`^[a-z][._-]?[a-zäöüß]{2,}$`)
 	funktionRe = regexp.MustCompile(`kita|kiga|kindergarten|kinder|kts|tagesst|familienzentrum|fz|leitung|info|kontakt|verwaltung|buero|office|post|mail|team|einrichtung|haus|villa|nest|zwerg|stern|sonne|regenbogen|kunterbunt|spatz|maus|baer`)
 )
 
+// Freemail-Anbieter: Dort ist eine Adresse ohne Kita-Bezug fast immer persönlich.
+var freemail = map[string]bool{
+	"gmail.com": true, "googlemail.com": true, "gmx.de": true, "gmx.net": true, "gmx.com": true, "web.de": true,
+	"t-online.de": true, "outlook.com": true, "outlook.de": true, "hotmail.com": true, "hotmail.de": true,
+	"live.de": true, "live.com": true, "yahoo.com": true, "yahoo.de": true, "icloud.com": true, "me.com": true,
+	"posteo.de": true, "mailbox.org": true, "freenet.de": true, "aol.com": true, "aol.de": true, "arcor.de": true,
+}
+
 // IstFunktionsadresse ist eine Heuristik gegen persönliche Adressen
-// (vorname.nachname@, v.nachname@). Im Zweifel lieber verwerfen.
+// (vorname.nachname@, v.nachname@, name@freemail). Im Zweifel lieber verwerfen.
 func IstFunktionsadresse(email string) bool {
-	lokal, _, ok := strings.Cut(strings.ToLower(email), "@")
+	lokal, domain, ok := strings.Cut(strings.ToLower(email), "@")
 	if !ok {
 		return false
 	}
 	if funktionRe.MatchString(lokal) {
 		return true
+	}
+	if freemail[domain] {
+		return false
 	}
 	if personRe.MatchString(lokal) {
 		return false

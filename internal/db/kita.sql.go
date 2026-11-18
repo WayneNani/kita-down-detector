@@ -17,7 +17,7 @@ WHERE aktiv AND id IN (
   WHERE z.quelle = $1 AND z.zuletzt_gesehen < $2
 ) AND NOT EXISTS (
   SELECT 1 FROM kita_zuordnung z2
-  WHERE z2.kita_id = kita.id AND z2.zuletzt_gesehen >= $2
+  WHERE z2.kita_id = kita.id AND z2.primaer AND z2.zuletzt_gesehen >= $2
 )
 `
 
@@ -59,7 +59,7 @@ func (q *Queries) GetKita(ctx context.Context, id int64) (Kitum, error) {
 }
 
 const getZuordnung = `-- name: GetZuordnung :one
-SELECT quelle, quelle_id, kita_id, aehnlichkeit, geprueft, daten, zuletzt_gesehen FROM kita_zuordnung WHERE quelle = $1 AND quelle_id = $2
+SELECT quelle, quelle_id, kita_id, aehnlichkeit, geprueft, daten, zuletzt_gesehen, primaer FROM kita_zuordnung WHERE quelle = $1 AND quelle_id = $2
 `
 
 type GetZuordnungParams struct {
@@ -78,6 +78,7 @@ func (q *Queries) GetZuordnung(ctx context.Context, arg GetZuordnungParams) (Kit
 		&i.Geprueft,
 		&i.Daten,
 		&i.ZuletztGesehen,
+		&i.Primaer,
 	)
 	return i, err
 }
@@ -123,13 +124,20 @@ const kitaKandidaten = `-- name: KitaKandidaten :many
 SELECT id, name, adresse_norm, similarity(name, $1::text)::real AS aehnlichkeit
 FROM kita
 WHERE plz = $2::text
-ORDER BY (adresse_norm = $3::text) DESC, aehnlichkeit DESC
+  -- Kitas, die diese Quelle schon einem anderen Datensatz zugeordnet hat, kommen nicht in Frage
+  AND NOT EXISTS (
+    SELECT 1 FROM kita_zuordnung z
+    WHERE z.kita_id = kita.id AND z.quelle = $3::text AND z.quelle_id <> $4::text
+  )
+ORDER BY (adresse_norm = $5::text) DESC, aehnlichkeit DESC
 LIMIT 3
 `
 
 type KitaKandidatenParams struct {
 	Name        string
 	Plz         string
+	Quelle      string
+	QuelleID    string
 	AdresseNorm string
 }
 
@@ -141,7 +149,13 @@ type KitaKandidatenRow struct {
 }
 
 func (q *Queries) KitaKandidaten(ctx context.Context, arg KitaKandidatenParams) ([]KitaKandidatenRow, error) {
-	rows, err := q.db.Query(ctx, kitaKandidaten, arg.Name, arg.Plz, arg.AdresseNorm)
+	rows, err := q.db.Query(ctx, kitaKandidaten,
+		arg.Name,
+		arg.Plz,
+		arg.Quelle,
+		arg.QuelleID,
+		arg.AdresseNorm,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +268,7 @@ func (q *Queries) KitasNachIDs(ctx context.Context, ids []int64) ([]Kitum, error
 }
 
 const lockKita = `-- name: LockKita :one
-SELECT id FROM kita WHERE id = $1 FOR UPDATE
+SELECT id FROM kita WHERE id = $1 AND aktiv FOR UPDATE
 `
 
 func (q *Queries) LockKita(ctx context.Context, id int64) (int64, error) {
@@ -264,7 +278,7 @@ func (q *Queries) LockKita(ctx context.Context, id int64) (int64, error) {
 }
 
 const offeneZuordnungen = `-- name: OffeneZuordnungen :many
-SELECT quelle, quelle_id, kita_id, aehnlichkeit, geprueft, daten, zuletzt_gesehen FROM kita_zuordnung WHERE kita_id IS NULL AND NOT geprueft ORDER BY quelle, quelle_id LIMIT $1
+SELECT quelle, quelle_id, kita_id, aehnlichkeit, geprueft, daten, zuletzt_gesehen, primaer FROM kita_zuordnung WHERE kita_id IS NULL AND NOT geprueft ORDER BY quelle, quelle_id LIMIT $1
 `
 
 func (q *Queries) OffeneZuordnungen(ctx context.Context, limit int32) ([]KitaZuordnung, error) {
@@ -284,6 +298,7 @@ func (q *Queries) OffeneZuordnungen(ctx context.Context, limit int32) ([]KitaZuo
 			&i.Geprueft,
 			&i.Daten,
 			&i.ZuletztGesehen,
+			&i.Primaer,
 		); err != nil {
 			return nil, err
 		}
@@ -293,6 +308,15 @@ func (q *Queries) OffeneZuordnungen(ctx context.Context, limit int32) ([]KitaZuo
 		return nil, err
 	}
 	return items, nil
+}
+
+const setzeKitaAktiv = `-- name: SetzeKitaAktiv :exec
+UPDATE kita SET aktiv = true WHERE id = $1 AND NOT aktiv
+`
+
+func (q *Queries) SetzeKitaAktiv(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, setzeKitaAktiv, id)
+	return err
 }
 
 const setzeZuordnung = `-- name: SetzeZuordnung :exec
@@ -310,21 +334,37 @@ func (q *Queries) SetzeZuordnung(ctx context.Context, arg SetzeZuordnungParams) 
 	return err
 }
 
+const sperreKita = `-- name: SperreKita :exec
+SELECT id FROM kita WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) SperreKita(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, sperreKita, id)
+	return err
+}
+
 const sucheKitas = `-- name: SucheKitas :many
 SELECT id, name, traeger, strasse, plz, ort, lat, lon, suchtext, adresse_norm, aktiv, erstellt_am FROM kita
-WHERE aktiv AND suchtext LIKE ALL ($1::text[])
-ORDER BY similarity(name, $2::text) DESC, name
-LIMIT $3
+WHERE aktiv AND suchtext LIKE $1::text AND suchtext LIKE ALL ($2::text[])
+ORDER BY similarity(name, $3::text) DESC, name
+LIMIT $4
 `
 
 type SucheKitasParams struct {
-	Muster  []string
+	Erstes  string
+	Weitere []string
 	Begriff string
 	Anzahl  int32
 }
 
+// erstes Wort einzeln, damit der Trigramm-Index greift
 func (q *Queries) SucheKitas(ctx context.Context, arg SucheKitasParams) ([]Kitum, error) {
-	rows, err := q.db.Query(ctx, sucheKitas, arg.Muster, arg.Begriff, arg.Anzahl)
+	rows, err := q.db.Query(ctx, sucheKitas,
+		arg.Erstes,
+		arg.Weitere,
+		arg.Begriff,
+		arg.Anzahl,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -358,7 +398,7 @@ func (q *Queries) SucheKitas(ctx context.Context, arg SucheKitasParams) ([]Kitum
 
 const updateKita = `-- name: UpdateKita :exec
 UPDATE kita SET name = $2, traeger = $3, strasse = $4, plz = $5, ort = $6, lat = $7, lon = $8,
-  suchtext = $9, adresse_norm = $10, aktiv = true
+  suchtext = $9, adresse_norm = $10
 WHERE id = $1
 `
 
@@ -392,13 +432,14 @@ func (q *Queries) UpdateKita(ctx context.Context, arg UpdateKitaParams) error {
 }
 
 const upsertZuordnung = `-- name: UpsertZuordnung :exec
-INSERT INTO kita_zuordnung (quelle, quelle_id, kita_id, aehnlichkeit, geprueft, daten, zuletzt_gesehen)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO kita_zuordnung (quelle, quelle_id, kita_id, aehnlichkeit, geprueft, daten, zuletzt_gesehen, primaer)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (quelle, quelle_id) DO UPDATE SET
   kita_id = COALESCE(kita_zuordnung.kita_id, excluded.kita_id),
   aehnlichkeit = COALESCE(kita_zuordnung.aehnlichkeit, excluded.aehnlichkeit),
   daten = excluded.daten,
-  zuletzt_gesehen = excluded.zuletzt_gesehen
+  zuletzt_gesehen = excluded.zuletzt_gesehen,
+  primaer = excluded.primaer
 `
 
 type UpsertZuordnungParams struct {
@@ -409,6 +450,7 @@ type UpsertZuordnungParams struct {
 	Geprueft       bool
 	Daten          []byte
 	ZuletztGesehen time.Time
+	Primaer        bool
 }
 
 func (q *Queries) UpsertZuordnung(ctx context.Context, arg UpsertZuordnungParams) error {
@@ -420,6 +462,7 @@ func (q *Queries) UpsertZuordnung(ctx context.Context, arg UpsertZuordnungParams
 		arg.Geprueft,
 		arg.Daten,
 		arg.ZuletztGesehen,
+		arg.Primaer,
 	)
 	return err
 }

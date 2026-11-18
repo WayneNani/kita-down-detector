@@ -7,8 +7,13 @@ DELETE FROM pow_verwendet WHERE ablauf < now();
 -- name: InsertMail :exec
 INSERT INTO mail_outbox (an, betreff, text) VALUES ($1, $2, $3);
 
--- name: FaelligeMails :many
-SELECT * FROM mail_outbox WHERE naechster_versuch <= now() ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED;
+-- name: ReserviereMails :many
+-- Reserviert fällige Mails für 10 Minuten (kurze Transaktion); versendet wird danach außerhalb.
+UPDATE mail_outbox SET naechster_versuch = now() + interval '10 minutes'
+WHERE id IN (
+  SELECT id FROM mail_outbox WHERE naechster_versuch <= now() ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED
+)
+RETURNING *;
 
 -- name: DeleteMail :exec
 DELETE FROM mail_outbox WHERE id = $1;

@@ -20,8 +20,9 @@ UPDATE kita_kontakt SET bestaetigt_am = $2 WHERE kita_id = $1 AND bestaetigt_am 
 INSERT INTO kontakt_vorschlag (kita_id, email, anlass, erstellt_am) VALUES ($1, $2, $3, $4) RETURNING id;
 
 -- name: ListVorschlaege :many
-SELECT v.*, k.name AS kita_name, k.ort AS kita_ort
+SELECT v.*, k.name AS kita_name, k.ort AS kita_ort, kk.email AS bisherige_email, kk.bestaetigt_am AS bisherige_bestaetigt_am
 FROM kontakt_vorschlag v JOIN kita k ON k.id = v.kita_id
+LEFT JOIN kita_kontakt kk ON kk.kita_id = v.kita_id
 ORDER BY v.id;
 
 -- name: GetVorschlag :one
@@ -35,3 +36,6 @@ DELETE FROM kontakt_vorschlag WHERE id = $1;
 
 -- name: ZaehleVorschlaegeHeute :one
 SELECT count(*) FROM kontakt_vorschlag WHERE kita_id = $1 AND erstellt_am = $2;
+
+-- name: LoescheAlteVorschlaege :execrows
+DELETE FROM kontakt_vorschlag WHERE erstellt_am < $1;

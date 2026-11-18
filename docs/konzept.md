@@ -38,7 +38,7 @@ Bei anonymen Meldungen gewinnt der Status mit den meisten unabhängigen Meldende
 | Was | Wie |
 |---|---|
 | IP-Adressen | Werden **nicht gespeichert** und nicht geloggt. |
-| Mehrfachmeldungen erkennen | `HMAC(Tagesgeheimnis, IP + User-Agent + Kita-ID)`. Das Tagesgeheimnis liegt nur im RAM und wird täglich neu erzeugt. Danach kann niemand einen Hash einer Person zuordnen; über Kitas hinweg sind Hashes nicht verknüpfbar. |
+| Mehrfachmeldungen erkennen | `HMAC(Tagesgeheimnis, IP-Präfix + Kita-ID)` – IPv4 vollständig, IPv6 als /56 (Anschluss), **ohne User-Agent** (den kann jede:r frei wählen). Das Tagesgeheimnis liegt nur im RAM und wird täglich neu erzeugt. Danach kann niemand einen Hash einer Person zuordnen; über Kitas hinweg sind Hashes nicht verknüpfbar. Unabhängige Meldende werden je Meldetag gezählt. Mehrere Eltern am selben Anschluss zählen als eine Meldung – lieber zu vorsichtig als zu leicht „bestätigt“. |
 | Zeitstempel | Nur Datum, keine Uhrzeit. |
 | Konten / Cookies / Tracking | Keine. Keine externen Ressourcen (Widget, Schriften, Skripte werden selbst ausgeliefert). |
 | Melde-Links | Pro Kita und Rolle, **nicht pro Person**. Gespeichert wird nur der SHA-256-Hash des Tokens. Gültig bis Ende des Kita-Jahres (31.07.), widerrufbar. |
@@ -57,7 +57,7 @@ Bei anonymen Meldungen gewinnt der Status mit den meisten unabhängigen Meldende
 1. Auf der Kita-Seite: „Angaben berichtigen“ → Formular mit denselben festen Feldern.
 2. Der Bestätigungslink geht **an die öffentlich bekannte Adresse der Einrichtung**, nicht an eine frei eingegebene Adresse.
 3. Bestätigung erst per Klick auf einen Button (POST), damit Link-Scanner in Mailprogrammen nichts auslösen. Einmal verwendbar, 7 Tage gültig.
-4. Die Berichtigung hat Vorrang vor allen anderen Meldungen und wird als „berichtigt durch Kita“ angezeigt.
+4. Die Berichtigung hat Vorrang vor Eltern- und Elternbeirat-Meldungen und wird als „berichtigt durch Kita“ angezeigt. Eine spätere Meldung der Kita über ihren eigenen Link ist gleichrangig und gilt dann (die Kita kann sich selbst korrigieren).
 5. Ist keine Adresse bekannt: Kontakt über die Betreiber-Adresse (`KONTAKT_EMAIL`); nach manueller Prüfung bekommt die Kita einen dauerhaften Melde-Link.
 
 Zusätzlich ist das **Änderungsprotokoll** je Kita öffentlich – das schafft Nachvollziehbarkeit gegenüber Kitas und Trägern.

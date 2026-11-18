@@ -5,40 +5,37 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/WayneNani/kita-down-detector/internal/db"
 	"github.com/WayneNani/kita-down-detector/internal/mail"
 )
 
-// MailsVersenden arbeitet die Outbox ab. Fehlgeschlagene Mails werden mit
-// wachsendem Abstand erneut versucht und nach 10 Versuchen bzw. 7 Tagen verworfen.
+// MailsVersenden arbeitet die Outbox ab. Fällige Mails werden in einer kurzen
+// Transaktion für 10 Minuten reserviert und danach einzeln versendet – so wird
+// bei einem Abbruch nichts doppelt verschickt und keine Transaktion bleibt offen.
+// Fehlgeschlagene Mails werden mit wachsendem Abstand erneut versucht und nach
+// 10 Versuchen bzw. 7 Tagen verworfen.
 func (d *Dienst) MailsVersenden(ctx context.Context, sender mail.Sender, log *slog.Logger) (int, error) {
+	mails, err := d.Q.ReserviereMails(ctx, 20)
+	if err != nil {
+		return 0, err
+	}
 	gesendet := 0
-	err := pgx.BeginFunc(ctx, d.Pool, func(tx pgx.Tx) error {
-		q := d.Q.WithTx(tx)
-		mails, err := q.FaelligeMails(ctx, 20)
-		if err != nil {
-			return err
-		}
-		for _, m := range mails {
-			if err := sender.Senden(ctx, mail.Mail{An: m.An, Betreff: m.Betreff, Text: m.Text}); err != nil {
-				// Keine Empfängeradresse ins Log schreiben.
-				log.Warn("Mailversand fehlgeschlagen", "id", m.ID, "versuch", m.Versuche+1, "fehler", err.Error())
-				warte := time.Duration(1<<min(m.Versuche, 8)) * time.Minute
-				if err := q.MailFehlgeschlagen(ctx, db.MailFehlgeschlagenParams{ID: m.ID, NaechsterVersuch: time.Now().Add(warte)}); err != nil {
-					return err
-				}
-				continue
+	for _, m := range mails {
+		if err := sender.Senden(ctx, mail.Mail{An: m.An, Betreff: m.Betreff, Text: m.Text}); err != nil {
+			// Nie die Fehlermeldung des Mailservers ungefiltert loggen: Sie enthält Empfängeradressen.
+			log.Warn("Mailversand fehlgeschlagen", "id", m.ID, "versuch", m.Versuche+1, "grund", mail.Fehlergrund(err))
+			warte := time.Duration(1<<min(m.Versuche, 8)) * time.Minute
+			if err := d.Q.MailFehlgeschlagen(ctx, db.MailFehlgeschlagenParams{ID: m.ID, NaechsterVersuch: time.Now().Add(warte)}); err != nil {
+				return gesendet, err
 			}
-			if err := q.DeleteMail(ctx, m.ID); err != nil {
-				return err
-			}
-			gesendet++
+			continue
 		}
-		return nil
-	})
-	return gesendet, err
+		if err := d.Q.DeleteMail(ctx, m.ID); err != nil {
+			return gesendet, err
+		}
+		gesendet++
+	}
+	return gesendet, nil
 }
 
 // Hintergrund startet Mailversand (alle 5 s) und Aufräumen (stündlich).

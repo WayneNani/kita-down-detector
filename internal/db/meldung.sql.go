@@ -49,6 +49,7 @@ const einschraenkungen = `-- name: Einschraenkungen :many
 SELECT k.id, k.name, k.traeger, k.strasse, k.plz, k.ort, k.lat, k.lon, k.suchtext, k.adresse_norm, k.aktiv, k.erstellt_am, t.kita_id, t.datum, t.status, t.stufe, t.uhrzeit_von, t.uhrzeit_bis, t.grund, t.anzahl
 FROM tagesstatus t JOIN kita k ON k.id = t.kita_id
 WHERE t.datum = $1::date
+  AND k.aktiv
   AND t.status IN ('verkuerzt', 'notbetreuung', 'geschlossen')
   AND ($2::text IS NULL OR lower(k.ort) = lower($2::text))
 ORDER BY CASE t.status WHEN 'geschlossen' THEN 0 WHEN 'notbetreuung' THEN 1 ELSE 2 END, k.name
@@ -303,8 +304,20 @@ func (q *Queries) ListFehlendeKitas(ctx context.Context) ([]FehlendeKitum, error
 	return items, nil
 }
 
+const loescheAlteFehlende = `-- name: LoescheAlteFehlende :execrows
+DELETE FROM fehlende_kita WHERE erstellt_am < $1
+`
+
+func (q *Queries) LoescheAlteFehlende(ctx context.Context, erstelltAm time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, loescheAlteFehlende, erstelltAm)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const meldungenImZeitraum = `-- name: MeldungenImZeitraum :many
-SELECT id, kita_id, status, datum_von, datum_bis, uhrzeit_von, uhrzeit_bis, grund, quelle, melder_hash
+SELECT id, kita_id, status, datum_von, datum_bis, uhrzeit_von, uhrzeit_bis, grund, quelle, melder_hash, erstellt_am
 FROM meldung
 WHERE kita_id = $1 AND zeitraum && daterange($2::date, $3::date, '[]')
 ORDER BY id
@@ -327,6 +340,7 @@ type MeldungenImZeitraumRow struct {
 	Grund      *string
 	Quelle     string
 	MelderHash []byte
+	ErstelltAm time.Time
 }
 
 func (q *Queries) MeldungenImZeitraum(ctx context.Context, arg MeldungenImZeitraumParams) ([]MeldungenImZeitraumRow, error) {
@@ -349,6 +363,7 @@ func (q *Queries) MeldungenImZeitraum(ctx context.Context, arg MeldungenImZeitra
 			&i.Grund,
 			&i.Quelle,
 			&i.MelderHash,
+			&i.ErstelltAm,
 		); err != nil {
 			return nil, err
 		}
@@ -358,6 +373,40 @@ func (q *Queries) MeldungenImZeitraum(ctx context.Context, arg MeldungenImZeitra
 		return nil, err
 	}
 	return items, nil
+}
+
+const offeneGleicheBerichtigung = `-- name: OffeneGleicheBerichtigung :one
+SELECT count(*) FROM berichtigung
+WHERE kita_id = $1 AND NOT bestaetigt AND ablauf >= $8::date
+  AND status = $2 AND datum_von = $3 AND datum_bis = $4
+  AND uhrzeit_von IS NOT DISTINCT FROM $5 AND uhrzeit_bis IS NOT DISTINCT FROM $6 AND grund IS NOT DISTINCT FROM $7
+`
+
+type OffeneGleicheBerichtigungParams struct {
+	KitaID     int64
+	Status     string
+	DatumVon   time.Time
+	DatumBis   time.Time
+	UhrzeitVon *string
+	UhrzeitBis *string
+	Grund      *string
+	Heute      time.Time
+}
+
+func (q *Queries) OffeneGleicheBerichtigung(ctx context.Context, arg OffeneGleicheBerichtigungParams) (int64, error) {
+	row := q.db.QueryRow(ctx, offeneGleicheBerichtigung,
+		arg.KitaID,
+		arg.Status,
+		arg.DatumVon,
+		arg.DatumBis,
+		arg.UhrzeitVon,
+		arg.UhrzeitBis,
+		arg.Grund,
+		arg.Heute,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const protokollFuerKita = `-- name: ProtokollFuerKita :many

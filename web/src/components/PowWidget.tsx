@@ -34,6 +34,8 @@ export function PowWidget({ onPayload, neuStarten = 0 }: { onPayload: (p: string
     const beiAenderung = (e: Event) => {
       const d = (e as CustomEvent<{ state?: string; payload?: string }>).detail ?? {};
       cb.current(d.state === 'verified' && d.payload ? d.payload : null);
+      // Challenges gelten 10 Minuten. Wer zwischendurch abgelenkt war, soll nicht hängen bleiben.
+      if (d.state === 'expired') setTimeout(() => el.verify?.(), 0);
     };
     const beiVerifiziert = (e: Event) => {
       const d = (e as CustomEvent<{ payload?: string }>).detail ?? {};

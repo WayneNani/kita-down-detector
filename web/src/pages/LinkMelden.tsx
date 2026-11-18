@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type KitaDetail, type MeldungInput, type S } from '../api/client';
-import { schluessel, useInfo } from '../api/queries';
+import { schluessel, useInfo, aktuellesHeute } from '../api/queries';
 import { gemerkterLink, merkeLink, tokenFuerSeite } from '../lib/token';
 import { MeldeFormular } from '../components/MeldeFormular';
 import { FehlerBox, Laden } from '../components/Fehler';
@@ -78,6 +78,8 @@ export default function LinkMelden() {
   async function melden(m: MeldungInput) {
     const neu = await api<KitaDetail>('/link/meldungen', { body: m, token: { art: 'Link', wert: token! } });
     qc.setQueryData(schluessel.kita(neu.kita.id), neu);
+    void qc.invalidateQueries({ queryKey: ['auswahl'] });
+    void qc.invalidateQueries({ queryKey: ['status'] });
     setLetzte(neu);
     toast('Danke! Die Meldung ist gespeichert und wird als verifiziert angezeigt.');
   }
@@ -117,7 +119,7 @@ export default function LinkMelden() {
       )}
 
       <h2>Einschränkung melden</h2>
-      <MeldeFormular heute={info.heute} grenzen={info} mitPow={false} knopfText="Verifizierte Meldung absenden" onSenden={melden} />
+      <MeldeFormular heute={aktuellesHeute(info.heute)} grenzen={info} mitPow={false} knopfText="Verifizierte Meldung absenden" onSenden={melden} />
     </div>
   );
 }

@@ -74,10 +74,15 @@ export default function Einladung() {
       </p>
       <div className="box">
         <p>
-          Jemand hat für Ihre Kita einen Melde-Link als <strong>Elternbeirat</strong> angefordert. Meldungen über diesen Link werden auf Kita-Ausfall
-          NRW als „verifiziert durch Elternbeirat“ angezeigt.
+          Für Ihre Kita wurde ein Melde-Link als <strong>Elternbeirat</strong> angefordert. Meldungen über diesen Link werden auf Kita-Ausfall NRW
+          als „verifiziert durch Elternbeirat“ angezeigt.
         </p>
-        <p>Bitte bestätigen Sie nur, wenn die Anfrage tatsächlich von Ihrem Elternbeirat kommt (zum Beispiel nach Rücksprache).</p>
+        <p>
+          Angefragt von: <strong className="umbruch">{q.data.angefragt_von}</strong>
+          <br />
+          Der Link geht an diese Adresse.
+        </p>
+        <p>Bitte bestätigen Sie nur, wenn Sie die Adresse Ihrem Elternbeirat zuordnen können – im Zweifel kurz nachfragen.</p>
       </div>
       <label className="check">
         <input type="checkbox" checked={kitaLink} onChange={(e) => setKitaLink(e.target.checked)} />

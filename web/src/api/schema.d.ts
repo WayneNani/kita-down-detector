@@ -551,9 +551,9 @@ export interface paths {
          * Elternbeirat beantragt einen Melde-Link; die Kita bestätigt per Mail
          * @description Ist für die Kita eine Adresse hinterlegt, geht die Bestätigungsanfrage sofort
          *     dorthin (`status: gesendet`). Sonst muss `kita_email` angegeben werden; die
-         *     Adresse wird dann geprüft (`status: pruefung`), außer ihre Domain steht auf
-         *     der Liste vertrauenswürdiger Träger-Domains.
-         *     Die Adresse des Elternbeirats wird nur bis zum Versand des Links gespeichert.
+         *     Adresse wird dann immer manuell geprüft (`status: pruefung`).
+         *     Die Kita sieht die Adresse des Elternbeirats, um die Anfrage zuordnen zu können.
+         *     Sie wird gelöscht, sobald der Link versendet oder die Anfrage abgelaufen ist.
          */
         post: {
             parameters: {
@@ -682,7 +682,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Kita hinterlegt ihre Funktionsadresse (wird geprüft, dann kommt ein Kita-Link per Mail) */
+        /**
+         * Kita hinterlegt ihre Funktionsadresse (wird manuell geprüft, dann kommt ein Kita-Link per Mail)
+         * @description Ist bereits eine von der Kita bestätigte Adresse hinterlegt, wird der Vorschlag abgelehnt (422).
+         */
         post: {
             parameters: {
                 query?: never;
@@ -890,7 +893,7 @@ export interface components {
             meldung: components["schemas"]["MeldungInput"];
         };
         Gesendet: {
-            /** @description Maskierte Adresse, z. B. k***@stadt.de */
+            /** @description Nur die Domain der hinterlegten Adresse, z. B. ***@stadt.de */
             gesendet_an: string;
         };
         EinladungAnfrage: {
@@ -914,6 +917,8 @@ export interface components {
         };
         EinladungInfo: {
             kita: components["schemas"]["KitaKurz"];
+            /** @description Adresse des anfragenden Elternbeirats – die Kita soll erkennen können, wer anfragt (wird im Formular angekündigt). */
+            angefragt_von: string;
         };
         FehlendeKita: {
             name: string;

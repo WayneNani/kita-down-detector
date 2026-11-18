@@ -19,38 +19,6 @@ func (q *Queries) DeleteMail(ctx context.Context, id int64) error {
 	return err
 }
 
-const faelligeMails = `-- name: FaelligeMails :many
-SELECT id, an, betreff, text, versuche, naechster_versuch, erstellt FROM mail_outbox WHERE naechster_versuch <= now() ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED
-`
-
-func (q *Queries) FaelligeMails(ctx context.Context, limit int32) ([]MailOutbox, error) {
-	rows, err := q.db.Query(ctx, faelligeMails, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []MailOutbox{}
-	for rows.Next() {
-		var i MailOutbox
-		if err := rows.Scan(
-			&i.ID,
-			&i.An,
-			&i.Betreff,
-			&i.Text,
-			&i.Versuche,
-			&i.NaechsterVersuch,
-			&i.Erstellt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const insertMail = `-- name: InsertMail :exec
 INSERT INTO mail_outbox (an, betreff, text) VALUES ($1, $2, $3)
 `
@@ -174,4 +142,41 @@ func (q *Queries) PowVerwenden(ctx context.Context, arg PowVerwendenParams) (int
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const reserviereMails = `-- name: ReserviereMails :many
+UPDATE mail_outbox SET naechster_versuch = now() + interval '10 minutes'
+WHERE id IN (
+  SELECT id FROM mail_outbox WHERE naechster_versuch <= now() ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED
+)
+RETURNING id, an, betreff, text, versuche, naechster_versuch, erstellt
+`
+
+// Reserviert fällige Mails für 10 Minuten (kurze Transaktion); versendet wird danach außerhalb.
+func (q *Queries) ReserviereMails(ctx context.Context, limit int32) ([]MailOutbox, error) {
+	rows, err := q.db.Query(ctx, reserviereMails, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []MailOutbox{}
+	for rows.Next() {
+		var i MailOutbox
+		if err := rows.Scan(
+			&i.ID,
+			&i.An,
+			&i.Betreff,
+			&i.Text,
+			&i.Versuche,
+			&i.NaechsterVersuch,
+			&i.Erstellt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

@@ -44,6 +44,7 @@ type Statistik struct {
 	Spalten                                      map[Feld]string
 	Gelesen, Uebersprungen, Neu, Zugeordnet      int
 	Aktualisiert, Offen, Emails, EmailsVerworfen int
+	Doppelt, KoordinatenVerworfen                int
 	Deaktiviert                                  int64
 }
 
@@ -55,7 +56,10 @@ func (s Statistik) String() string {
 			fmt.Fprintf(&b, "  %-11s ← %s\n", f, v)
 		}
 	}
-	fmt.Fprintf(&b, "Gelesen: %d, übersprungen (ohne Name): %d\n", s.Gelesen, s.Uebersprungen)
+	fmt.Fprintf(&b, "Gelesen: %d, übersprungen (ohne Name): %d, doppelte IDs übersprungen: %d\n", s.Gelesen, s.Uebersprungen, s.Doppelt)
+	if s.KoordinatenVerworfen > 0 {
+		fmt.Fprintf(&b, "Ungültige Koordinaten verworfen (Kita trotzdem importiert): %d\n", s.KoordinatenVerworfen)
+	}
 	fmt.Fprintf(&b, "Neu angelegt: %d, vorhandenen Kitas zugeordnet: %d (davon aktualisiert: %d), offen zur Prüfung: %d\n", s.Neu, s.Zugeordnet, s.Aktualisiert, s.Offen)
 	fmt.Fprintf(&b, "Kontaktadressen übernommen: %d, als persönlich verworfen: %d\n", s.Emails, s.EmailsVerworfen)
 	if s.Deaktiviert > 0 {
@@ -77,7 +81,11 @@ var (
 )
 
 func zahl(s string) (float64, bool) {
-	s = strings.TrimSpace(strings.ReplaceAll(s, ",", "."))
+	s = strings.TrimSpace(s)
+	if strings.Contains(s, ",") {
+		// deutsches Format „356.558,858“: Punkte sind Tausendertrenner
+		s = strings.ReplaceAll(strings.ReplaceAll(s, ".", ""), ",", ".")
+	}
 	if s == "" {
 		return 0, false
 	}
@@ -93,6 +101,9 @@ func opt(s string) *string {
 	return &s
 }
 
+var errKoordinate = errors.New("ungültige Koordinate")
+
+// umwandeln liefert errKoordinate, wenn nur die Koordinate unbrauchbar ist (Datensatz bleibt nutzbar).
 func umwandeln(r Roh, sp map[Feld]string, o Optionen) (datensatz, error) {
 	get := func(f Feld) string {
 		if k, ok := sp[f]; ok {
@@ -145,16 +156,18 @@ func umwandeln(r Roh, sp map[Feld]string, o Optionen) (datensatz, error) {
 	if !hatXY && r.X != nil && r.Y != nil {
 		x, y, hatXY = *r.X, *r.Y, true
 	}
-	if hatXY {
-		lat, lon, err := koordinaten(x, y, o.CRS)
-		if err != nil {
-			return d, err
-		}
-		d.Lat, d.Lon = &lat, &lon
-	}
 	if d.QuelleID == "" {
 		h := sha256.Sum256([]byte(privacy.Normalisiere(d.Name) + "|" + plz + "|" + privacy.AdresseNorm(strasse)))
 		d.QuelleID = "h:" + hex.EncodeToString(h[:8])
+	}
+	if hatXY && !(x == 0 && y == 0) {
+		lat, lon, err := koordinaten(x, y, o.CRS)
+		if err != nil {
+			return d, errKoordinate
+		}
+		d.Lat, d.Lon = &lat, &lon
+	} else if hatXY {
+		return d, errKoordinate // 0/0 ist ein Platzhalter
 	}
 	return d, nil
 }
@@ -194,15 +207,23 @@ func Importieren(ctx context.Context, d *dienst.Dienst, pfad string, o Optionen)
 	}
 	err = pgx.BeginFunc(ctx, d.Pool, func(tx pgx.Tx) error {
 		q := d.Q.WithTx(tx)
+		gesehen := map[string]bool{}
 		for _, r := range roh {
 			ds, err := umwandeln(r, sp, o)
-			if err != nil {
+			if errors.Is(err, errKoordinate) {
+				st.KoordinatenVerworfen++
+			} else if err != nil {
 				return fmt.Errorf("%s: %w", ds.Name, err)
 			}
 			if ds.Name == "" {
 				st.Uebersprungen++
 				continue
 			}
+			if gesehen[ds.QuelleID] {
+				st.Doppelt++
+				continue
+			}
+			gesehen[ds.QuelleID] = true
 			if err := importiereEinen(ctx, d, q, ds, o, &st); err != nil {
 				return fmt.Errorf("%s: %w", ds.Name, err)
 			}
@@ -234,14 +255,20 @@ func importiereEinen(ctx context.Context, d *dienst.Dienst, q *db.Queries, ds da
 		return err
 	}
 	if kitaID == nil && ds.Plz != nil {
-		kand, err := q.KitaKandidaten(ctx, db.KitaKandidatenParams{Name: ds.Name, Plz: *ds.Plz, AdresseNorm: privacy.AdresseNorm(deref(ds.Strasse))})
+		adr := privacy.AdresseNorm(deref(ds.Strasse))
+		kand, err := q.KitaKandidaten(ctx, db.KitaKandidatenParams{Name: ds.Name, Plz: *ds.Plz, AdresseNorm: adr, Quelle: o.Quelle, QuelleID: ds.QuelleID})
 		if err != nil {
 			return err
 		}
 		if len(kand) > 0 {
 			k := kand[0]
-			gleicheAdresse := k.AdresseNorm != "" && k.AdresseNorm == privacy.AdresseNorm(deref(ds.Strasse))
-			if (gleicheAdresse && k.Aehnlichkeit >= 0.2) || k.Aehnlichkeit >= 0.6 {
+			// Gleiche Adresse + halbwegs ähnlicher Name → dieselbe Kita.
+			// Abweichende Adresse → nie automatisch (generische Namen wie
+			// „Städtische Kindertageseinrichtung …“ sind sehr ähnlich).
+			// Fehlt einer Seite die Adresse, nur bei sehr ähnlichem Namen.
+			gleicheAdresse := adr != "" && k.AdresseNorm == adr
+			ohneAdresse := adr == "" || k.AdresseNorm == ""
+			if (gleicheAdresse && k.Aehnlichkeit >= 0.2) || (ohneAdresse && k.Aehnlichkeit >= 0.8) {
 				kitaID = &k.ID
 			}
 			aehnlichkeit = &k.Aehnlichkeit
@@ -256,11 +283,22 @@ func importiereEinen(ctx context.Context, d *dienst.Dienst, q *db.Queries, ds da
 			return err
 		}
 		neu := ds.KitaDaten
-		if o.Modus != Primaer { // nur Lücken füllen
-			neu = dienst.KitaDaten{Name: vorhanden.Name, Traeger: oder(vorhanden.Traeger, ds.Traeger), Strasse: oder(vorhanden.Strasse, ds.Strasse),
-				Plz: oder(vorhanden.Plz, ds.Plz), Ort: oder(vorhanden.Ort, ds.Ort), Lat: oderF(vorhanden.Lat, ds.Lat), Lon: oderF(vorhanden.Lon, ds.Lon)}
+		if o.Modus != Primaer {
+			// Ergänzung: nur fehlende Koordinaten und Träger; Name, Adresse und
+			// „aktiv“ bestimmt allein die primäre Quelle.
+			neu = dienst.KitaDaten{Name: vorhanden.Name, Traeger: oder(vorhanden.Traeger, ds.Traeger), Strasse: vorhanden.Strasse,
+				Plz: vorhanden.Plz, Ort: vorhanden.Ort, Lat: vorhanden.Lat, Lon: vorhanden.Lon}
+			if vorhanden.Lat == nil || vorhanden.Lon == nil {
+				neu.Lat, neu.Lon = ds.Lat, ds.Lon
+			}
 		} else {
 			neu.Traeger, neu.Lat, neu.Lon = oder(ds.Traeger, vorhanden.Traeger), oderF(ds.Lat, vorhanden.Lat), oderF(ds.Lon, vorhanden.Lon)
+			if !vorhanden.Aktiv {
+				if err := q.SetzeKitaAktiv(ctx, *kitaID); err != nil {
+					return err
+				}
+				st.Aktualisiert++
+			}
 		}
 		if aendert(vorhanden, neu) {
 			if err := d.KitaAktualisieren(ctx, q, *kitaID, neu); err != nil {
@@ -283,7 +321,7 @@ func importiereEinen(ctx context.Context, d *dienst.Dienst, q *db.Queries, ds da
 	if err != nil {
 		return err
 	}
-	if err := q.UpsertZuordnung(ctx, db.UpsertZuordnungParams{Quelle: o.Quelle, QuelleID: ds.QuelleID, KitaID: kitaID, Aehnlichkeit: aehnlichkeit, Geprueft: kitaID != nil && aehnlichkeit == nil, Daten: daten, ZuletztGesehen: d.Heute()}); err != nil {
+	if err := q.UpsertZuordnung(ctx, db.UpsertZuordnungParams{Quelle: o.Quelle, QuelleID: ds.QuelleID, KitaID: kitaID, Aehnlichkeit: aehnlichkeit, Geprueft: kitaID != nil && aehnlichkeit == nil, Daten: daten, ZuletztGesehen: d.Heute(), Primaer: o.Modus == Primaer}); err != nil {
 		return err
 	}
 
@@ -306,7 +344,7 @@ func importiereEinen(ctx context.Context, d *dienst.Dienst, q *db.Queries, ds da
 
 func aendert(k db.Kitum, n dienst.KitaDaten) bool {
 	return k.Name != n.Name || deref(k.Traeger) != deref(n.Traeger) || deref(k.Strasse) != deref(n.Strasse) ||
-		deref(k.Plz) != deref(n.Plz) || deref(k.Ort) != deref(n.Ort) || !gleichF(k.Lat, n.Lat) || !gleichF(k.Lon, n.Lon) || !k.Aktiv
+		deref(k.Plz) != deref(n.Plz) || deref(k.Ort) != deref(n.Ort) || !gleichF(k.Lat, n.Lat) || !gleichF(k.Lon, n.Lon)
 }
 
 func oder(a, b *string) *string {

@@ -57,7 +57,7 @@ export default function Start() {
           {meine.isPending && <Laden />}
           {meine.isError && !meine.data && <FehlerBox fehler={meine.error} />}
           <KitaListe eintraege={meineSortiert} annahme={ohneMeldungAlsRegulaer} />
-          <Stand aktualisiert={meine.dataUpdatedAt} />
+          <Stand aktualisiert={meine.dataUpdatedAt} daten={meine.data} fehlgeschlagen={meine.isRefetchError} />
         </section>
       )}
 
@@ -147,7 +147,7 @@ export default function Start() {
             Alle {einschrListe.length} anzeigen
           </button>
         )}
-        <Stand aktualisiert={einschr.dataUpdatedAt} />
+        <Stand aktualisiert={einschr.dataUpdatedAt} daten={einschr.data} fehlgeschlagen={einschr.isRefetchError} />
         <p className="hinweis">„Keine Meldung“ heißt nicht automatisch reguläre Betreuung – nur, dass uns nichts gemeldet wurde.</p>
       </section>
 

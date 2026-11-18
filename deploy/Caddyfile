@@ -1,5 +1,12 @@
-# TLS automatisch (Let's Encrypt). Bewusst KEIN „log“-Block: Caddy schreibt
-# dann keine Zugriffsprotokolle – IP-Adressen landen nirgends.
+# TLS automatisch (Let's Encrypt).
+# Keine IP-Adressen in Logs: Zugriffs-Logs sind aus (kein „log“-Block) und das
+# Fehler-Log von HTTP-Anfragen (enthält remote_ip und Header) wird verworfen.
+{
+	log default {
+		exclude http.log.access http.log.error
+	}
+}
+
 {$DOMAIN} {
 	encode zstd gzip
 

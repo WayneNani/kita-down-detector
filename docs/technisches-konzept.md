@@ -51,7 +51,8 @@ flowchart LR
   H --> E
 ```
 
-- **Caddy** terminiert TLS (automatische Zertifikate), setzt HSTS und schreibt **kein Access-Log**. Die App sieht die Client-IP über `X-Forwarded-For` (nur von Caddy vertraut).
+- **Caddy** terminiert TLS (automatische Zertifikate), setzt HSTS und schreibt **keine Logs mit IP-Adressen** (Access- und HTTP-Fehler-Log verworfen). Die App sieht die Client-IP über `X-Forwarded-For`, vertraut aber nur Caddys fester Adresse. Das Docker-Netz hat IPv6, sonst kämen alle IPv6-Verbindungen mit der Gateway-Adresse an.
+- **Migrationen** laufen in einem eigenen, einmaligen Container mit der Schema-Rolle; der App-Container kennt nur die DML-Rolle.
 - Die **App** ist zustandsarm. Flüchtiger Zustand im RAM: Tagesgeheimnis für Melder-Hashes, Rate-Limit-Zähler.
 - **Hintergrundjobs** laufen als Goroutinen im selben Prozess (Ticker). Bei mehr als einer Instanz verhindert ein Postgres-Advisory-Lock die doppelte Ausführung.
 
@@ -236,7 +237,7 @@ Ausführlich begründet in [`konzept.md`, Abschnitt 8](konzept.md#8-kita-stammda
 | Schritt | Umsetzung |
 |---|---|
 | **Basis: Landesdatensatz** „Kindertageseinrichtungen in NRW“ (aus KiBiz.web, monatlich aktualisiert, Datenlizenz Deutschland – Namensnennung 2.0) | `kita-ausfall import kibiz` lädt den Datensatz monatlich (Download/Atom-Feed von GEOportal.NRW bzw. open.nrw). Upsert über die Einrichtungs-ID des Datensatzes. Einrichtungen, die fehlen, werden `aktiv = false` gesetzt, nicht gelöscht, weil ihre Historie erhalten bleiben soll. |
-| **Ergänzung: kommunale Open Data, OSM** | `kita-ausfall import <quelle>` schreibt in `kita_zuordnung`. Automatischer Abgleich über normalisierte Adresse (PLZ + Straße + Hausnummer) und Namensähnlichkeit (`pg_trgm`). Ab hoher Ähnlichkeit wird automatisch zugeordnet, sonst landet der Eintrag in einer Prüfliste (`kita-ausfall zuordnung pruefen`). Übernommen werden nur E-Mail-Adressen, keine anderen Felder. |
+| **Ergänzung: kommunale Open Data, OSM** | `kita-ausfall import <quelle>` schreibt in `kita_zuordnung`. Automatischer Abgleich über normalisierte Adresse (PLZ + Straße + Hausnummer) und Namensähnlichkeit (`pg_trgm`). Automatisch zugeordnet wird nur bei **gleicher Adresse** und ähnlichem Namen (oder ohne Adresse bei sehr ähnlichem Namen) – generische Namen wie „Städtische Kindertageseinrichtung …“ sind sich sehr ähnlich. Kitas, die dieselbe Quelle schon einem anderen Datensatz zugeordnet hat, kommen nicht in Frage. Sonst landet der Eintrag in einer Prüfliste (`kita-ausfall zuordnung liste`). Übernommen werden E-Mail-Adressen sowie fehlende Koordinaten und Träger; Name, Adresse und „aktiv“ bestimmt allein die primäre Quelle. |
 | **E-Mail-Filter** | Adressen, die wie Personen aussehen (`vorname.nachname@`, `v.nachname@`), werden beim Import verworfen. Erlaubt sind nur Funktionsadressen. |
 | **Kontakt per Selbstauskunft** | Eine Kita (oder der Elternbeirat für sie) trägt eine Adresse ein → Bestätigungsmail an diese Adresse → erst nach Klick `kita_kontakt` mit `herkunft = 'kita_selbst'` bzw. `'eingeladen'`. Eine bereits bestätigte Adresse kann nur von der bisherigen Adresse aus oder manuell geändert werden. |
 | **Kita fehlt** | Meldeformular „Kita fehlt“ (Name, Adresse, mit PoW) → Prüfliste. Wird erst nach Abgleich mit dem nächsten Landesdatensatz oder manueller Prüfung freigeschaltet. |
@@ -318,7 +319,10 @@ Die offenen Daten (`/status`, `/kitas/{id}`) sind unter einer freien Lizenz ver�
 | Bedrohung | Maßnahme |
 |---|---|
 | Massenhafte Falschmeldungen | PoW, Rate-Limit pro IP (RAM) und pro Gerät/Kita/Tag (DB), Vertrauensstufen, Mehrheitsprinzip |
-| Gezielte Falschmeldung gegen eine Kita | Bleibt „unbestätigt“; Elternbeirat/Kita überstimmen; Berichtigung hat Vorrang; öffentliches Protokoll |
+| Gezielte Falschmeldung gegen eine Kita | Bleibt „unbestätigt“ (eine Person = ein Anschluss, User-Agent zählt nicht); Elternbeirat/Kita überstimmen; Berichtigung hat Vorrang; öffentliches Protokoll |
+| Übernahme der Kontaktadresse einer Kita | Neue Adressen immer manuell geprüft (auch bekannte Träger-Domains); bestätigte Adressen nur mit `--ueberschreiben` ersetzbar; Einladungsmail zeigt der Kita, wer anfragt |
+| Kontingent einer Kita aufbrauchen (Berichtigungen blockieren) | Je Anschluss höchstens 2 Anfragen pro Kita und Tag; gleiche offene Berichtigung löst keine weitere Mail aus; Obergrenze je Kita 10/Tag |
+| Missbrauchter Melde-Link | `link widerrufen --meldungen-entfernen` löscht dessen Meldungen und berechnet den Status neu |
 | Mailbombing einer Kita über Berichtigungen | PoW + max. 3 Anfragen/Kita/Tag + Mail nur an hinterlegte Adresse |
 | Abgreifen von Link-Tokens | Token im URL-Fragment (nie in Server-Logs/Referer), 256 Bit, nur Hash gespeichert, Ablauf, Widerruf |
 | SQL-Injection | Ausschließlich parametrisierte Abfragen via sqlc |
@@ -347,8 +351,9 @@ Das **Fragment wird vom Browser nie an den Server gesendet**. Damit landet das T
 
 ### 7.4 Melder-Hash und Rate-Limit
 
-- `melder_hash = HMAC-SHA256(tagesgeheimnis, ip_praefix ‖ user_agent ‖ kita_id)[:16]`
-  - `ip_praefix`: IPv4 vollständig, **IPv6 auf /64 gekürzt** (Privacy Extensions wechseln die hinteren Bits).
+- `melder_hash = HMAC-SHA256(tagesgeheimnis, ip_praefix ‖ kita_id)[:16]` – bewusst **ohne User-Agent**, sonst könnte eine Person mit zwei Browsern „zwei Eltern“ sein.
+  - `ip_praefix`: IPv4 vollständig, **IPv6 auf /56 gekürzt** (Privacy Extensions wechseln die hinteren 64 Bit; Haushalte haben meist ein /56).
+  - Unabhängige Meldende werden je Meldetag gezählt (Hashes verschiedener Tage sind nicht vergleichbar).
   - `tagesgeheimnis`: 32 Zufallsbytes, nur im RAM, Wechsel um Mitternacht (Europe/Berlin) und bei jedem Neustart.
 - Rate-Limit im RAM: Token-Bucket je `HMAC(tagesgeheimnis, ip_praefix)`, z. B. 20 Challenges/min und 30 POSTs/h. Die Einträge verfallen nach 1 h.
 

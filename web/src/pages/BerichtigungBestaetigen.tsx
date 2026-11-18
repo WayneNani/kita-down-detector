@@ -54,6 +54,8 @@ export default function BerichtigungBestaetigen() {
     try {
       const d = await api<KitaDetail>('/berichtigung/bestaetigen', { methode: 'POST', body: {}, token: { art: 'Berichtigung', wert: token! } });
       qc.setQueryData(schluessel.kita(d.kita.id), d);
+      void qc.invalidateQueries({ queryKey: ['auswahl'] });
+      void qc.invalidateQueries({ queryKey: ['status'] });
       toast('Berichtigung übernommen.');
       navigate(`/kita/${d.kita.id}`);
     } catch (e) {

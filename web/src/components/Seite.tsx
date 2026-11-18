@@ -4,13 +4,14 @@ import { Link, useParams } from 'react-router';
 import { useKita } from '../api/queries';
 import { adresse } from './KitaListe';
 import { FehlerBox, Laden } from './Fehler';
-import type { KitaDetail } from '../api/client';
+import { ApiError, type KitaDetail } from '../api/client';
 
 /** Rahmen für Unterseiten einer Kita (Berichtigung, Elternbeirat, Kontakt). */
 export function KitaUnterseite({ titel, children }: { titel: string; children: (d: KitaDetail) => ReactNode }) {
   const id = Number(useParams().id);
   const kita = useKita(id);
   useTitel(kita.data ? `${titel} – ${kita.data.kita.name}` : null);
+  if (!(Number.isInteger(id) && id > 0)) return <FehlerBox fehler={new ApiError(404, 'Nicht gefunden', 'Diese Kita gibt es nicht.')} />;
   if (kita.isPending) return <Laden />;
   if (!kita.data) return <FehlerBox fehler={kita.error} />;
   const k = kita.data.kita;

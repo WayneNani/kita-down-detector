@@ -128,3 +128,58 @@ func TestImportPrimaerUndErgaenzung(t *testing.T) {
 		t.Fatal("Trockenlauf hat gespeichert")
 	}
 }
+
+// Review-Funde: generische Namen, Ergänzung reaktiviert, Platzhalter-Koordinaten, „Nr“-Spalte, doppelte IDs.
+func TestImportRealistischeStolpersteine(t *testing.T) {
+	pool := testdb.Pool(t, "test_importer2")
+	jetzt := time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
+	d := dienst.Neu(pool, config.Config{}, func() time.Time { return jetzt })
+	ctx := context.Background()
+
+	land := schreibe(t, "land.csv", "id;name;strasse;Nr;plz;ort;lat;lon\n"+
+		"101;Städtische Kindertageseinrichtung Am Park;Parkstraße;1;50667;Köln;50.94;6.95\n"+
+		"102;Städtische Kindertageseinrichtung Am Bach;Bachweg;3;50667;Köln;0;0\n"+
+		"103;Städtische Kindertageseinrichtung Domstraße;Domstraße;3;50667;Köln;50.94;6.96\n"+
+		"103;Doppelte ID;Irgendwo;1;50667;Köln;;\n", false)
+	st, err := Importieren(ctx, d, land, Optionen{Quelle: "kibiz", Modus: Primaer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Neu != 3 || st.Doppelt != 1 || st.KoordinatenVerworfen != 1 {
+		t.Fatalf("ähnliche Namen mit verschiedenen Adressen müssen getrennte Kitas bleiben:\n%s", st)
+	}
+	var strasse string
+	pool.QueryRow(ctx, `SELECT strasse FROM kita WHERE name LIKE '%Am Bach'`).Scan(&strasse)
+	if strasse != "Bachweg 3" {
+		t.Fatalf("Spalte „Nr“ muss Hausnummer sein: %q", strasse)
+	}
+	// erneuter Import: stabil, nichts neu, nichts überschrieben
+	st, err = Importieren(ctx, d, land, Optionen{Quelle: "kibiz", Modus: Primaer})
+	if err != nil || st.Neu != 0 || st.Zugeordnet != 3 {
+		t.Fatalf("%v\n%s", err, st)
+	}
+
+	// Primärquelle lässt „Am Park“ weg → ausgeblendet; Ergänzung darf sie nicht wieder aktivieren
+	jetzt = jetzt.AddDate(0, 1, 0)
+	land2 := schreibe(t, "land2.csv", "id;name;strasse;plz;ort\n102;Städtische Kindertageseinrichtung Am Bach;Bachweg 3;50667;Köln\n103;Städtische Kindertageseinrichtung Domstraße;Domstraße 3;50667;Köln\n", false)
+	if st, err = Importieren(ctx, d, land2, Optionen{Quelle: "kibiz", Modus: Primaer}); err != nil || st.Deaktiviert != 1 {
+		t.Fatalf("%v\n%s", err, st)
+	}
+	osm := schreibe(t, "osm.csv", "id;name;strasse;plz;ort;lat;lon\nnode/1;Städtische Kindertageseinrichtung Am Park;Parkstraße 1;50667;Köln;50.94;6.95\n", false)
+	if st, err = Importieren(ctx, d, osm, Optionen{Quelle: "osm", Modus: Ergaenzung}); err != nil {
+		t.Fatal(err)
+	}
+	var aktiv bool
+	pool.QueryRow(ctx, `SELECT aktiv FROM kita WHERE name LIKE '%Am Park'`).Scan(&aktiv)
+	if aktiv {
+		t.Fatal("Ergänzungsquelle hat eine ausgeblendete Kita wieder aktiviert")
+	}
+}
+
+func TestZahlMitTausendertrennern(t *testing.T) {
+	for in, want := range map[string]float64{"356.558,858": 356558.858, "6,9583": 6.9583, "50.94": 50.94} {
+		if got, ok := zahl(in); !ok || got != want {
+			t.Errorf("%s: %v", in, got)
+		}
+	}
+}

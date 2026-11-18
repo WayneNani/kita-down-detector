@@ -10,6 +10,8 @@ info:
     - Uhrzeiten: `HH:MM`
     - Fehler: RFC 9457 (`application/problem+json`), `detail` auf Deutsch
     - POST-Anfragen: `Content-Type: application/json`, max. 8 KB, unbekannte Felder werden abgelehnt
+      (400 bei ungültigem JSON, 415 bei anderem Content-Type, 404 für unbekannte oder ausgeblendete Kitas,
+      429 bei Kontingent: je Anschluss höchstens 2 Berichtigungen/Einladungen/Adressvorschläge pro Kita und Tag)
     - Tokens aus Links (Melde-Link, Berichtigung, Einladung) werden im
       `Authorization`-Header gesendet, nie in der URL.
   license:
@@ -221,9 +223,9 @@ paths:
       description: |
         Ist für die Kita eine Adresse hinterlegt, geht die Bestätigungsanfrage sofort
         dorthin (`status: gesendet`). Sonst muss `kita_email` angegeben werden; die
-        Adresse wird dann geprüft (`status: pruefung`), außer ihre Domain steht auf
-        der Liste vertrauenswürdiger Träger-Domains.
-        Die Adresse des Elternbeirats wird nur bis zum Versand des Links gespeichert.
+        Adresse wird dann immer manuell geprüft (`status: pruefung`).
+        Die Kita sieht die Adresse des Elternbeirats, um die Anfrage zuordnen zu können.
+        Sie wird gelöscht, sobald der Link versendet oder die Anfrage abgelaufen ist.
       parameters:
         - $ref: '#/components/parameters/KitaId'
       requestBody:
@@ -276,7 +278,8 @@ paths:
 
   /kitas/{id}/kontakt-vorschlaege:
     post:
-      summary: Kita hinterlegt ihre Funktionsadresse (wird geprüft, dann kommt ein Kita-Link per Mail)
+      summary: Kita hinterlegt ihre Funktionsadresse (wird manuell geprüft, dann kommt ein Kita-Link per Mail)
+      description: Ist bereits eine von der Kita bestätigte Adresse hinterlegt, wird der Vorschlag abgelehnt (422).
       parameters:
         - $ref: '#/components/parameters/KitaId'
       requestBody:
@@ -489,7 +492,7 @@ components:
       type: object
       required: [gesendet_an]
       properties:
-        gesendet_an: { type: string, description: 'Maskierte Adresse, z. B. k***@stadt.de' }
+        gesendet_an: { type: string, description: 'Nur die Domain der hinterlegten Adresse, z. B. ***@stadt.de' }
 
     EinladungAnfrage:
       type: object
@@ -509,9 +512,12 @@ components:
 
     EinladungInfo:
       type: object
-      required: [kita]
+      required: [kita, angefragt_von]
       properties:
         kita: { $ref: '#/components/schemas/KitaKurz' }
+        angefragt_von:
+          type: string
+          description: Adresse des anfragenden Elternbeirats – die Kita soll erkennen können, wer anfragt (wird im Formular angekündigt).
 
     FehlendeKita:
       type: object

@@ -17,11 +17,16 @@ import (
 )
 
 const (
-	maxAnfragenProKitaUndTag = 3
-	berichtigungGueltigTage  = 7
-	einladungGueltigTage     = 7
-	pruefungGueltigTage      = 30
-	maxFehlendeProTag        = 200
+	// Obergrenze je Kita und Tag über alle Anfragenden; zusätzlich begrenzt die
+	// HTTP-Schicht je Anschluss (2 pro Kita und Tag), damit niemand allein das
+	// Kontingent einer Kita aufbrauchen kann.
+	maxAnfragenProKitaUndTag  = 10
+	vorschlagAufbewahrungTage = 60
+	fehlendeAufbewahrungTage  = 90
+	berichtigungGueltigTage   = 7
+	einladungGueltigTage      = 7
+	pruefungGueltigTage       = 30
+	maxFehlendeProTag         = 200
 )
 
 // ---------------------------------------------------------------- Melde-Links
@@ -74,6 +79,39 @@ func (d *Dienst) MeldenPerLink(ctx context.Context, li LinkInfo, m Meldung) erro
 	})
 }
 
+// LinksWiderrufen sperrt Links einer Kita. Mit meldungenEntfernen werden auch
+// alle Meldungen über diese Links gelöscht und der Status neu berechnet (z. B.
+// wenn ein Link in falsche Hände geraten ist).
+func (d *Dienst) LinksWiderrufen(ctx context.Context, kitaID int64, rolle *string, meldungenEntfernen bool) (widerrufen int64, entfernt int, err error) {
+	err = d.inTx(ctx, func(q *db.Queries) error {
+		if err := q.SperreKita(ctx, kitaID); err != nil {
+			return err
+		}
+		if widerrufen, err = q.WiderrufeLinks(ctx, db.WiderrufeLinksParams{KitaID: kitaID, Rolle: rolle}); err != nil {
+			return err
+		}
+		if !meldungenEntfernen {
+			return nil
+		}
+		bereiche, err := q.LoescheMeldungenWiderrufenerLinks(ctx, db.LoescheMeldungenWiderrufenerLinksParams{KitaID: kitaID, Rolle: rolle})
+		if err != nil || len(bereiche) == 0 {
+			return err
+		}
+		entfernt = len(bereiche)
+		von, bis := bereiche[0].DatumVon, bereiche[0].DatumBis
+		for _, b := range bereiche[1:] {
+			if b.DatumVon.Before(von) {
+				von = b.DatumVon
+			}
+			if b.DatumBis.After(bis) {
+				bis = b.DatumBis
+			}
+		}
+		return d.neuBerechnen(ctx, q, kitaID, von, bis)
+	})
+	return widerrufen, entfernt, err
+}
+
 // ---------------------------------------------------------------- Berichtigung
 
 func (d *Dienst) BerichtigungAnfragen(ctx context.Context, kitaID int64, m Meldung) (string, error) {
@@ -88,6 +126,18 @@ func (d *Dienst) BerichtigungAnfragen(ctx context.Context, kitaID int64, m Meldu
 			return ErrKeinKontakt
 		} else if err != nil {
 			return err
+		}
+		gesendetAn = privacy.MaskiereEmail(kontakt.Email)
+		// Gleiche Anfrage noch offen? Dann keine weitere Mail – die erste gilt.
+		offen, err := q.OffeneGleicheBerichtigung(ctx, db.OffeneGleicheBerichtigungParams{
+			KitaID: kitaID, Heute: d.Heute(), Status: m.Status, DatumVon: m.Von, DatumBis: m.Bis,
+			UhrzeitVon: m.UhrzeitVon, UhrzeitBis: m.UhrzeitBis, Grund: m.Grund,
+		})
+		if err != nil {
+			return err
+		}
+		if offen > 0 {
+			return nil
 		}
 		n, err := q.ZaehleBerichtigungenHeute(ctx, db.ZaehleBerichtigungenHeuteParams{KitaID: kitaID, ErstelltAm: d.Heute()})
 		if err != nil {
@@ -104,7 +154,6 @@ func (d *Dienst) BerichtigungAnfragen(ctx context.Context, kitaID int64, m Meldu
 		}); err != nil {
 			return err
 		}
-		gesendetAn = privacy.MaskiereEmail(kontakt.Email)
 		return q.InsertMail(ctx, d.mailBerichtigung(k, kontakt, m, token))
 	})
 	return gesendetAn, err
@@ -161,7 +210,10 @@ type EinladungErgebnis struct {
 	GesendetAn string
 }
 
-func (d *Dienst) vertraut(email string) bool {
+// Vertraut: Die Domain gehört zu einem bekannten Träger. Das ist nur ein Hinweis
+// für die manuelle Prüfung – Adressen werden nie automatisch übernommen, sonst
+// könnte jedes Postfach einer Stadtverwaltung die Adresse jeder Kita übernehmen.
+func (d *Dienst) Vertraut(email string) bool {
 	_, domain, _ := strings.Cut(email, "@")
 	return slices.Contains(d.Cfg.VertrauteDomains, domain)
 }
@@ -204,18 +256,13 @@ func (d *Dienst) EinladungAnfragen(ctx context.Context, kitaID int64, ebEmail st
 			if err != nil {
 				return err
 			}
-			if !d.vertraut(ke) {
-				if _, err := q.InsertEinladung(ctx, db.InsertEinladungParams{KitaID: kitaID, EbEmail: eb, Status: "pruefung", Ablauf: datum.Plus(d.Heute(), pruefungGueltigTage), ErstelltAm: d.Heute()}); err != nil {
-					return err
-				}
-				_, err := q.InsertVorschlag(ctx, db.InsertVorschlagParams{KitaID: kitaID, Email: ke, Anlass: "einladung", ErstelltAm: d.Heute()})
-				erg = EinladungErgebnis{Status: "pruefung"}
+			// Die Adresse wird geprüft, bevor irgendetwas an sie geht.
+			if _, err := q.InsertEinladung(ctx, db.InsertEinladungParams{KitaID: kitaID, EbEmail: eb, Status: "pruefung", Ablauf: datum.Plus(d.Heute(), pruefungGueltigTage), ErstelltAm: d.Heute()}); err != nil {
 				return err
 			}
-			if err := q.SetzeKontakt(ctx, db.SetzeKontaktParams{KitaID: kitaID, Email: ke, Herkunft: "eingeladen", GeaendertAm: d.Heute()}); err != nil {
-				return err
-			}
-			kontakt = db.KitaKontakt{KitaID: kitaID, Email: ke}
+			_, err = q.InsertVorschlag(ctx, db.InsertVorschlagParams{KitaID: kitaID, Email: ke, Anlass: "einladung", ErstelltAm: d.Heute()})
+			erg = EinladungErgebnis{Status: "pruefung"}
+			return err
 		} else if err != nil {
 			return err
 		}
@@ -223,7 +270,7 @@ func (d *Dienst) EinladungAnfragen(ctx context.Context, kitaID int64, ebEmail st
 		if err != nil {
 			return err
 		}
-		if err := d.sendeEinladung(ctx, q, id, k, kontakt.Email); err != nil {
+		if err := d.sendeEinladung(ctx, q, id, k, kontakt.Email, eb); err != nil {
 			return err
 		}
 		erg = EinladungErgebnis{Status: "gesendet", GesendetAn: privacy.MaskiereEmail(kontakt.Email)}
@@ -232,12 +279,12 @@ func (d *Dienst) EinladungAnfragen(ctx context.Context, kitaID int64, ebEmail st
 	return erg, err
 }
 
-func (d *Dienst) sendeEinladung(ctx context.Context, q *db.Queries, einladungID int64, k db.Kitum, kitaEmail string) error {
+func (d *Dienst) sendeEinladung(ctx context.Context, q *db.Queries, einladungID int64, k db.Kitum, kitaEmail, ebEmail string) error {
 	token := privacy.NeuesToken()
 	if err := q.EinladungGesendet(ctx, db.EinladungGesendetParams{ID: einladungID, TokenHash: privacy.TokenHash(token), Ablauf: datum.Plus(d.Heute(), einladungGueltigTage)}); err != nil {
 		return err
 	}
-	return q.InsertMail(ctx, d.mailEinladung(k, kitaEmail, token))
+	return q.InsertMail(ctx, d.mailEinladung(k, kitaEmail, ebEmail, token))
 }
 
 type EinladungInfo struct {
@@ -308,6 +355,11 @@ func (d *Dienst) KontaktVorschlagen(ctx context.Context, kitaID int64, roh strin
 		if _, err := q.GetKita(ctx, kitaID); err != nil {
 			return nichtGefunden(err)
 		}
+		if k, err := q.GetKontakt(ctx, kitaID); err == nil && k.BestaetigtAm != nil {
+			return Validierungsfehler{{"email", "Für diese Kita ist bereits eine bestätigte Adresse hinterlegt. Für eine Änderung schreiben Sie bitte an " + d.Cfg.KontaktEmail + "."}}
+		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
 		n, err := q.ZaehleVorschlaegeHeute(ctx, db.ZaehleVorschlaegeHeuteParams{KitaID: kitaID, ErstelltAm: d.Heute()})
 		if err != nil {
 			return err
@@ -315,27 +367,29 @@ func (d *Dienst) KontaktVorschlagen(ctx context.Context, kitaID int64, roh strin
 		if n >= maxAnfragenProKitaUndTag {
 			return ErrZuViele
 		}
-		id, err := q.InsertVorschlag(ctx, db.InsertVorschlagParams{KitaID: kitaID, Email: email, Anlass: "kita", ErstelltAm: d.Heute()})
-		if err != nil {
-			return err
-		}
-		if d.vertraut(email) {
-			return d.vorschlagAnnehmen(ctx, q, id)
-		}
-		return nil
+		// Immer manuelle Prüfung – auch bei bekannten Träger-Domains.
+		_, err = q.InsertVorschlag(ctx, db.InsertVorschlagParams{KitaID: kitaID, Email: email, Anlass: "kita", ErstelltAm: d.Heute()})
+		return err
 	})
 }
 
+var ErrBestaetigterKontakt = errors.New("die Kita hat bereits eine bestätigte Adresse – nur mit --ueberschreiben ersetzen")
+
 // VorschlagAnnehmen (Verwaltung): Adresse übernehmen, wartende Einladungen versenden,
 // bei Anlass „kita“ einen Kita-Link an die Adresse schicken.
-func (d *Dienst) VorschlagAnnehmen(ctx context.Context, id int64) error {
-	return d.inTx(ctx, func(q *db.Queries) error { return d.vorschlagAnnehmen(ctx, q, id) })
+func (d *Dienst) VorschlagAnnehmen(ctx context.Context, id int64, ueberschreiben bool) error {
+	return d.inTx(ctx, func(q *db.Queries) error { return d.vorschlagAnnehmen(ctx, q, id, ueberschreiben) })
 }
 
-func (d *Dienst) vorschlagAnnehmen(ctx context.Context, q *db.Queries, id int64) error {
+func (d *Dienst) vorschlagAnnehmen(ctx context.Context, q *db.Queries, id int64, ueberschreiben bool) error {
 	v, err := q.GetVorschlag(ctx, id)
 	if err != nil {
 		return nichtGefunden(err)
+	}
+	if k, err := q.GetKontakt(ctx, v.KitaID); err == nil && k.BestaetigtAm != nil && !ueberschreiben {
+		return ErrBestaetigterKontakt
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
 	}
 	herkunft := "eingeladen"
 	if v.Anlass == "kita" {
@@ -369,7 +423,7 @@ func (d *Dienst) wartendeEinladungenSenden(ctx context.Context, q *db.Queries, k
 		return err
 	}
 	for _, e := range wartend {
-		if err := d.sendeEinladung(ctx, q, e.ID, k, kitaEmail); err != nil {
+		if err := d.sendeEinladung(ctx, q, e.ID, k, kitaEmail, e.EbEmail); err != nil {
 			return err
 		}
 	}
@@ -509,7 +563,7 @@ func (d *Dienst) KitaAktualisieren(ctx context.Context, q *db.Queries, id int64,
 // ---------------------------------------------------------------- Aufräumen
 
 type AufraeumErgebnis struct {
-	Meldungen, Berichtigungen, Links, Einladungen, Pow, Mails int64
+	Meldungen, Berichtigungen, Links, Einladungen, Pow, Mails, Vorschlaege, Fehlende int64
 }
 
 // Aufraeumen setzt die Löschfristen durch. Das aggregierte tagesstatus/protokoll bleibt.
@@ -530,6 +584,14 @@ func (d *Dienst) Aufraeumen(ctx context.Context) (AufraeumErgebnis, error) {
 		func() error { r.Einladungen, err = d.Q.LoescheAlteEinladungen(ctx, h); return err },
 		func() error { r.Pow, err = d.Q.PowAufraeumen(ctx); return err },
 		func() error { r.Mails, err = d.Q.MailsAufgeben(ctx); return err },
+		func() error {
+			r.Vorschlaege, err = d.Q.LoescheAlteVorschlaege(ctx, datum.Plus(h, -vorschlagAufbewahrungTage))
+			return err
+		},
+		func() error {
+			r.Fehlende, err = d.Q.LoescheAlteFehlende(ctx, datum.Plus(h, -fehlendeAufbewahrungTage))
+			return err
+		},
 	}
 	for _, s := range schritte {
 		if err := s(); err != nil {

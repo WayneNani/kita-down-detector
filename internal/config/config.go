@@ -91,6 +91,10 @@ func Laden() (Config, error) {
 		_, _ = rand.Read(b)
 		c.AltchaSecret = hex.EncodeToString(b)
 	}
+	if c.AufbewahrungTage < 8 {
+		// Meldungen reichen bis 7 Tage zurück; kürzere Fristen würden den angezeigten Status verfälschen.
+		return c, fmt.Errorf("AUFBEWAHRUNG_TAGE muss mindestens 8 sein")
+	}
 	if c.AltchaCounterMax <= c.AltchaCounterMin {
 		return c, fmt.Errorf("ALTCHA_COUNTER_MAX muss größer als ALTCHA_COUNTER_MIN sein")
 	}

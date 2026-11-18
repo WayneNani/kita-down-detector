@@ -16,11 +16,13 @@ echo "postgres://kita_migrate:$(cat secrets/kita_migrate_password)@db:5432/kita?
 echo "smtps://BENUTZER:PASSWORT@smtp.example.eu:465" > secrets/smtp_url   # SMTP-Relay in der EU mit AV-Vertrag
 
 export DOMAIN=kita-ausfall.example KONTAKT_EMAIL=kontakt@kita-ausfall.example
-export VERTRAUTE_DOMAINS=stadt-koeln.de,bonn.de   # Adressen dieser Träger ohne manuelle Prüfung
+export VERTRAUTE_DOMAINS=stadt-koeln.de,bonn.de   # nur Hinweis in der Prüfliste, keine automatische Übernahme
 docker compose up -d --build
 ```
 
-Die Datenbank ist nur im internen Netz erreichbar. Die App läuft als `kita_app` (nur Daten lesen/schreiben), Migrationen laufen beim Start mit `kita_migrate`.
+Die Datenbank ist nur im internen Netz erreichbar. Migrationen laufen in einem eigenen, einmaligen Dienst (`migrate`) mit `kita_migrate`; die App kennt nur `kita_app` (nur Daten lesen/schreiben).
+
+**IPv6:** Der Host braucht IPv6 und Docker mit ip6tables (Standard ab Docker 27). Ohne IPv6 im Docker-Netz kämen alle IPv6-Verbindungen mit derselben Adresse an – dann teilen sich alle IPv6-Nutzer:innen ein Rate-Limit. Prüfen nach dem Start: zwei Meldungen von verschiedenen IPv6-Anschlüssen dürfen nicht als derselbe Anschluss zählen.
 
 ## Kita-Daten importieren
 
@@ -36,10 +38,11 @@ Der Landesdatensatz wird monatlich mit `--quelle kibiz --modus primaer` importie
 
 ```sh
 docker compose run --rm app vorschlaege liste       # vorgeschlagene Kita-Adressen
-docker compose run --rm app vorschlaege annehmen 12
+docker compose run --rm app vorschlaege annehmen 12   # bestätigte Adressen nur mit --ueberschreiben
 docker compose run --rm app fehlend liste           # gemeldete fehlende Kitas
 docker compose run --rm app zuordnung liste         # ungeklärte Import-Zuordnungen
 docker compose run --rm app link erstellen --kita 42 --rolle kita
+docker compose run --rm app link widerrufen --kita 42 --rolle elternbeirat --meldungen-entfernen   # bei Missbrauch
 ```
 
 ## Updates
