@@ -65,10 +65,15 @@ Zusätzlich ist das **Änderungsprotokoll** je Kita öffentlich – das schafft 
 ## 6. Melde-Links für Elternbeiräte und Kitas
 
 - Erzeugung per CLI: `npm run link:create -- --kita <id> --rolle elternbeirat|kita`.
-- **Offene Frage – Ausgabe:** Woher wissen wir, dass wirklich der Elternbeirat den Link bekommt? Vorschläge:
-  - Versand an die öffentliche Kita-Adresse mit der Bitte um Weitergabe an den Elternbeirat (Kita bestätigt implizit).
-  - Kooperation mit Jugendamtselternbeiräten (JAEB) bzw. dem Landeselternbeirat NRW (LEB NRW) für die Verteilung.
 - Jährliche Rotation (Ende Kita-Jahr), Widerruf jederzeit: `npm run link:create -- --kita <id> --widerrufen`.
+
+**Ausgabe an den Elternbeirat – Vorschlag „Die Kita lädt ein“:** Der Elternbeirat beantragt den Link auf der Kita-Seite. Die Kita bestätigt per Mail, dass die Person zum Elternbeirat gehört. Damit beantwortet sich auch, wer überhaupt Elternbeirat ist: Das weiß nur die Kita.
+
+1. Elternbeirat klickt auf der Kita-Seite „Wir sind der Elternbeirat“ und gibt eine eigene E-Mail-Adresse an, an die der Link später gehen soll (wird nach Versand gelöscht).
+2. Ist für die Kita eine Adresse hinterlegt, geht eine Bestätigungsanfrage dorthin. Ist keine hinterlegt, trägt der Elternbeirat die Funktionsadresse der Kita ein (siehe 8.2).
+3. Die Kita klickt „Ja, das ist unser Elternbeirat“. Dann geht der Link an den Elternbeirat, und die Kita-Adresse gilt als bestätigt. Auf Wunsch bekommt die Kita im selben Schritt ihren eigenen Link.
+
+Ergänzend: Kooperation mit Jugendamtselternbeiräten (JAEB) und dem Landeselternbeirat NRW, die den Weg in ihren Netzwerken bekannt machen.
 
 ## 7. Spätere Ausbaustufe: Kita-Mails mit Herkunftsnachweis
 
@@ -83,15 +88,52 @@ Zusätzlich ist das **Änderungsprotokoll** je Kita öffentlich – das schafft 
 
 ## 8. Kita-Stammdaten für NRW
 
-- **Jetzt:** OpenStreetMap (`amenity=kindergarten` in `ISO3166-2=DE-NW`) über die Overpass-API – `npm run import:osm`. ODbL-Namensnennung ist im Footer.
-- OSM ist unvollständig (NRW hat > 10.000 Kitas). Ergänzen mit: Open-Data-Portalen der Kommunen (Köln, Düsseldorf, Bonn, Münster …), Verzeichnissen der Landesjugendämter (LVR/LWL), ggf. Kita-Navigatoren der Städte (Nutzungsbedingungen prüfen).
-- Fehlende Kitas: per Kontaktadresse melden (Formular dafür ist eine mögliche Erweiterung).
+Wir brauchen zwei Dinge: eine **vollständige Liste aller Kitas** (Name, Adresse, Ort) und für möglichst viele davon eine **Kontaktadresse** für Berichtigungen und Einladungen. Das sind zwei unterschiedlich schwere Probleme.
+
+### 8.1 Die Liste aller Kitas: Landesdatensatz
+
+Das Land veröffentlicht den Datensatz **„Kindertageseinrichtungen in NRW“** (GEOportal.NRW, auch auf open.nrw). Er stammt aus **KiBiz.web**, dem Verwaltungssystem, in dem die Einrichtungen selbst ihre Daten pflegen, und wird **monatlich** aktualisiert. Lizenz laut Katalog: Datenlizenz Deutschland – Namensnennung 2.0.
+
+- Inhalt laut Beschreibung: Name, Adresse, Anzahl Gruppen und Plätze. Damit haben wir **alle Kitas mit Betriebserlaubnis**, nicht nur die in OSM erfassten.
+- Monatlicher Import. Kitas, die verschwinden, werden ausgeblendet statt gelöscht.
+- OSM (`npm run import:osm`) bleibt nur als Ergänzung (Koordinaten, gelegentlich E-Mail).
+- **Noch zu prüfen:** genaue Felder, ob es eine stabile Einrichtungs-ID gibt, ob Träger enthalten ist. Aus der Entwicklungsumgebung waren die Portale nicht erreichbar.
+
+### 8.2 Kontaktadressen: mehrere Quellen, eine Regel
+
+Der Landesdatensatz enthält nach Katalogbeschreibung **keine E-Mail-Adressen**. Es gibt keine einzelne Quelle dafür, deshalb kombinieren wir:
+
+| Quelle | Abdeckung | Aufwand | Bemerkung |
+|---|---|---|---|
+| **Kommunale Open Data** (z. B. Düsseldorf, Bonn, Münster, Wuppertal, Köln, Ennepe-Ruhr-Kreis, Rhein-Kreis Neuss) | einige Großstädte/Kreise | gering, einmal pro Quelle | Felder und Lizenz je Datensatz prüfen; teils nur Website statt E-Mail |
+| **IFG-Anfragen** an die Jugendämter (NRW hat rund 186) bzw. Landesjugendämter LVR/LWL, z. B. über FragDenStaat | potenziell flächendeckend | mittel, lange Laufzeit | Nach Funktionsadressen der Einrichtungen fragen; bei freien Trägern gibt die Behörde ggf. nicht alles heraus |
+| **Selbstauskunft / Einladung** (Kita trägt sich ein oder wird vom Elternbeirat eingeladen, siehe Abschnitt 6) | wächst mit der Nutzung | gering | Beste Qualität: Die Adresse ist **bestätigt**. Langfristig die Hauptquelle |
+| **OSM** (`email`/`contact:email`) | gering | keiner | Als Startwert |
+| **Städtische PDF-Übersichten** (viele Jugendämter veröffentlichen Kita-Listen mit Kontaktdaten) | lückenhaft | hoch (manuell) | Nur gezielt für Pilotstädte |
+
+**Nicht vorgesehen** ist das massenhafte automatische Auslesen von Kita-Websites: Rechtlich und ethisch ist das grenzwertig, und man bekommt viele Personenadressen.
+
+**Regeln für alle Quellen:**
+- Nur **Funktionsadressen** (z. B. `kita.sonnenschein@stadt.de`). Adressen nach dem Muster `vorname.nachname@` werden verworfen: Sie sind personenbezogen und veralten beim Personalwechsel.
+- Zu jeder Adresse wird die **Herkunft** gespeichert und ob die Kita sie **bestätigt** hat. Unbestätigte Adressen werden nur für Berichtigungsanfragen und Einladungen genutzt, deren Mail immer erklärt, woher die Adresse stammt, und wie man sie löschen lässt.
+- Kontaktadressen erscheinen nie auf der Website oder in der API.
+
+### 8.3 Empfohlenes Vorgehen
+
+1. Landesdatensatz importieren → alle Kitas sind suchbar, und es kann für jede gemeldet werden, auch ohne Kontaktadresse.
+2. **Pilotstädte** wählen (z. B. 2–3 Städte mit offenen Kita-Daten inkl. Kontakt) und dort Adressen importieren. Dort gezielt Elternbeiräte und JAEB ansprechen.
+3. Parallel eine **IFG-Anfrage** an LVR und LWL bzw. an die Jugendämter der Pilotregionen stellen.
+4. Ab dann wächst die Abdeckung über den Einladungsweg (Abschnitt 6).
+
+Fehlende Kitas können über ein Formular „Kita fehlt“ gemeldet werden und werden nach Prüfung ergänzt.
 
 ## 9. Offene Punkte / nächste Schritte
 
 - [ ] Hosting in der EU, Reverse-Proxy **ohne** Access-Logs (oder mit gekürzten IPs), `TRUST_PROXY=1`.
 - [ ] Impressum, Datenschutzerklärung juristisch prüfen lassen (Verantwortliche:r, Rechtsgrundlage Art. 6 Abs. 1 lit. f DSGVO für die Hash-Bildung).
-- [ ] Ausgabeprozess für Elternbeirat-Links festlegen (s. 6.).
+- [ ] Einladungsweg für Elternbeirat-Links umsetzen (s. 6.) und mit 1–2 Elternbeiräten testen.
+- [ ] Landesdatensatz prüfen (Felder, ID, Lizenz) und Pilotstädte auswählen (s. 8.3).
+- [ ] IFG-Anfrage zu Funktionsadressen der Kitas stellen (s. 8.2).
 - [ ] Optional: Bereich (U3 / Ü3 / Hort) je Meldung.
 - [ ] Optional: Benachrichtigungen (z. B. RSS/ICS-Feed pro Kita – ohne Konten).
 - [ ] DKIM-Stufe (s. 7.).

@@ -60,7 +60,8 @@ flowchart LR
 Eine Instanz (2 vCPU) schafft mehrere tausend Lesezugriffe pro Sekunde. Für Lastspitzen (z. B. Streiktag mit Presseberichten):
 
 1. Lese-Endpunkte senden `Cache-Control: public, max-age=30, stale-while-revalidate=60`. Caddy oder ein vorgeschalteter EU-Cache kann puffern.
-2. Bei Bedarf eine zweite App-Instanz. Dafür muss das Tagesgeheimnis in Postgres liegen statt im RAM (Tabelle `tagesgeheimnis`, täglich gelöscht). Das ist bewusst **nicht** der Startzustand, weil „nur im RAM“ die stärkere Datenschutzzusage ist.
+2. **Entscheidung: Wir starten mit genau einer Instanz.** Das Tagesgeheimnis liegt nur im RAM, das ist die stärkste Datenschutzzusage. Bekannte Nebenwirkung: Nach einem Neustart beginnt die Tageszählung für Mehrfachmeldungen und Rate-Limits neu. Deployments legen wir deshalb möglichst in die Nacht.
+   Sollte später eine zweite Instanz nötig werden, wandert das Tagesgeheimnis in eine Postgres-Tabelle `tagesgeheimnis`, die täglich gelöscht wird.
 
 ---
 
@@ -104,7 +105,7 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;
 
 CREATE TABLE kita (
   id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  quelle         text NOT NULL,                 -- 'osm', 'opendata-koeln', ...
+  quelle         text NOT NULL,                 -- 'kibiz' (Landesdatensatz), 'osm', 'opendata-koeln', ...
   quelle_id      text NOT NULL,
   name           text NOT NULL,
   traeger        text,
@@ -113,8 +114,28 @@ CREATE TABLE kita (
   ort            text,
   lat            double precision,
   lon            double precision,
-  kontakt_email  text,                          -- nur öffentlich bekannte Funktionsadresse
+  aktiv          boolean NOT NULL DEFAULT true, -- false, wenn nicht mehr im Landesdatensatz
   UNIQUE (quelle, quelle_id)
+);
+
+-- Kontaktadresse getrennt von den Stammdaten, mit Herkunft und Prüfstatus.
+-- Nur Funktionsadressen (kita-xy@…), keine personenbezogenen (vorname.nachname@…).
+CREATE TABLE kita_kontakt (
+  kita_id        bigint PRIMARY KEY REFERENCES kita ON DELETE CASCADE,
+  email          text NOT NULL,
+  herkunft       text NOT NULL CHECK (herkunft IN ('opendata', 'ifg', 'osm', 'kita_selbst', 'eingeladen', 'manuell')),
+  bestaetigt_am  date,                          -- gesetzt, sobald die Kita einen Link an diese Adresse bestätigt hat
+  geaendert_am   date NOT NULL
+);
+
+-- Weitere Quellen werden der Kita zugeordnet (z. B. OSM-Objekt ↔ KiBiz-Eintrag).
+CREATE TABLE kita_zuordnung (
+  quelle         text NOT NULL,
+  quelle_id      text NOT NULL,
+  kita_id        bigint REFERENCES kita ON DELETE CASCADE,  -- NULL = noch ungeklärt
+  aehnlichkeit   real,
+  geprueft       boolean NOT NULL DEFAULT false,
+  PRIMARY KEY (quelle, quelle_id)
 );
 CREATE INDEX kita_name_trgm ON kita USING gin (name gin_trgm_ops);
 CREATE INDEX kita_ort_trgm  ON kita USING gin (ort gin_trgm_ops);
@@ -208,6 +229,20 @@ CREATE TABLE mail_outbox (
 
 **Datenbankrollen:** `kita_migrate` (DDL, nur für Migrationen) und `kita_app` (nur `SELECT/INSERT/UPDATE/DELETE` auf die Tabellen). Die App läuft mit `kita_app`.
 
+### 4.1 Kita-Stammdaten und Kontaktadressen
+
+Ausführlich begründet in [`konzept.md`, Abschnitt 8](konzept.md#8-kita-stammdaten-für-nrw). Technisch:
+
+| Schritt | Umsetzung |
+|---|---|
+| **Basis: Landesdatensatz** „Kindertageseinrichtungen in NRW“ (aus KiBiz.web, monatlich aktualisiert, Datenlizenz Deutschland – Namensnennung 2.0) | `kita-ausfall import kibiz` lädt den Datensatz monatlich (Download/Atom-Feed von GEOportal.NRW bzw. open.nrw). Upsert über die Einrichtungs-ID des Datensatzes. Einrichtungen, die fehlen, werden `aktiv = false` gesetzt, nicht gelöscht, weil ihre Historie erhalten bleiben soll. |
+| **Ergänzung: kommunale Open Data, OSM** | `kita-ausfall import <quelle>` schreibt in `kita_zuordnung`. Automatischer Abgleich über normalisierte Adresse (PLZ + Straße + Hausnummer) und Namensähnlichkeit (`pg_trgm`). Ab hoher Ähnlichkeit wird automatisch zugeordnet, sonst landet der Eintrag in einer Prüfliste (`kita-ausfall zuordnung pruefen`). Übernommen werden nur E-Mail-Adressen, keine anderen Felder. |
+| **E-Mail-Filter** | Adressen, die wie Personen aussehen (`vorname.nachname@`, `v.nachname@`), werden beim Import verworfen. Erlaubt sind nur Funktionsadressen. |
+| **Kontakt per Selbstauskunft** | Eine Kita (oder der Elternbeirat für sie) trägt eine Adresse ein → Bestätigungsmail an diese Adresse → erst nach Klick `kita_kontakt` mit `herkunft = 'kita_selbst'` bzw. `'eingeladen'`. Eine bereits bestätigte Adresse kann nur von der bisherigen Adresse aus oder manuell geändert werden. |
+| **Kita fehlt** | Meldeformular „Kita fehlt“ (Name, Adresse, mit PoW) → Prüfliste. Wird erst nach Abgleich mit dem nächsten Landesdatensatz oder manueller Prüfung freigeschaltet. |
+
+> **Noch zu prüfen**, bevor Phase 1 fertig ist: genaue Feldnamen, Einrichtungs-ID und Download-URL des Landesdatensatzes. Aus der Sandbox heraus waren die Portale nicht erreichbar. Laut Katalogbeschreibung enthält er Name, Adresse, Anzahl Gruppen und Plätze; Träger und E-Mail sind dort nicht aufgeführt.
+
 ---
 
 ## 5. Kernabläufe
@@ -267,6 +302,9 @@ REST/JSON unter `/api/v1`, Fehler im Format **RFC 9457** (`application/problem+j
 | `POST /kitas/{id}/berichtigungen` | Berichtigung anfragen | PoW, 3/Kita/Tag |
 | `GET /berichtigungen/aktuell` | Zusammenfassung zur Bestätigung | `Authorization: Berichtigung <token>` |
 | `POST /berichtigungen/aktuell/bestaetigen` | Bestätigen | dto. |
+| `POST /kitas/{id}/einladungen` | Elternbeirat beantragt Link, Kita bestätigt per Mail (Ablauf in `konzept.md`, Abschnitt 6) | PoW, 3/Kita/Tag |
+| `POST /kitas/{id}/kontakt` | Kita trägt Funktionsadresse ein → Bestätigungsmail | PoW, 3/Kita/Tag |
+| `POST /kitas/fehlend` | „Kita fehlt“ melden → Prüfliste | PoW |
 | `GET /healthz`, `GET /readyz` | Liveness/Readiness | nur intern (Caddy leitet nicht weiter) |
 
 Die offenen Daten (`/status`, `/kitas/{id}`) sind unter einer freien Lizenz veröffentlicht (Vorschlag: CC BY 4.0 für Statusdaten; Stammdaten aus OSM unter ODbL).
@@ -337,14 +375,45 @@ Das **Fragment wird vom Browser nie an den Server gesendet**. Damit landet das T
 
 ---
 
-## 9. Frontend (React)
+## 9. Frontend (React) – Mobile first
+
+Die meisten Eltern kommen **vom Handy**, oft über einen Link aus der Eltern-WhatsApp-Gruppe, morgens zwischen Tür und Angel und mit schlechtem Netz. Darauf wird zuerst optimiert; Desktop ist die Erweiterung.
+
+### 9.1 Technik
 
 - **Vite + React 19 + TypeScript (strict)**, `react-router` (Library-Modus), **TanStack Query** für Laden, Caching und Neuladen nach Meldungen.
-- Kein UI-Framework: schlichtes CSS mit Custom Properties (heller/dunkler Modus). Ziel ist **WCAG 2.1 AA** (semantische Formulare, Tastaturbedienung, Kontraste, Status nie nur über Farbe).
-- **ALTCHA-Widget** als Web Component, **lazy geladen** nur auf Formularseiten. Startet beim Öffnen des Formulars (`auto="onload"`).
-- Seiten: Start (Suche + heutige Einschränkungen), Kita (14-Tage-Status, Protokoll, Melden), Link-Melden, Berichtigung anfragen, Berichtigung bestätigen, Datenschutz/Funktionsweise.
-- **Performance-Budget:** JS initial ≤ 80 KB gzip (ohne Widget), LCP < 1,5 s auf Mittelklasse-Handy und 4G. Code-Splitting pro Route.
-- **Suchmaschinen und Link-Vorschau:** Go rendert `index.html` als Template und setzt für `/kita/{id}` `<title>` und `<meta name="description">` serverseitig (Name, Ort, heutiger Status). Mehr SSR ist nicht nötig.
+- Kein UI-Framework: schlichtes CSS mit Custom Properties (heller/dunkler Modus), Layout ab **360 px Breite** entworfen.
+- **ALTCHA-Widget** als Web Component, **lazy geladen** nur auf Formularseiten.
+- Seiten: Start (Meine Kitas, Suche, Einschränkungen heute), Kita (14-Tage-Status, Protokoll, Melden), Link-Melden, Berichtigung anfragen/bestätigen, Datenschutz/Funktionsweise.
+
+### 9.2 Die wichtigsten Abläufe auf dem Handy
+
+| Ablauf | Ziel | Umsetzung |
+|---|---|---|
+| **„Ist heute bei meiner Kita etwas?“** | Antwort in < 2 s nach dem Öffnen | **Meine Kitas**: als Favoriten nur auf dem Gerät gespeichert (`localStorage`, kein Konto). Die Startseite zeigt sie ganz oben mit dem Status von heute und morgen. |
+| **Link aus der Eltern-Gruppe öffnen** | Kita-Seite sofort lesbar, auch im In-App-Browser von WhatsApp/Instagram | Go setzt Titel und Vorschau (Open Graph: Kita, Ort, Status heute) serverseitig und **bettet die Daten der Seite als JSON in `index.html` ein**. Damit entfällt die zweite Netzwerkrunde vor der ersten Anzeige. |
+| **Einschränkung melden** | In ≤ 15 s, mit einer Hand | Unten fest platzierter Knopf „Einschränkung melden“ öffnet ein Bottom Sheet. Große Auswahlkarten statt kleiner Radiobuttons. Schnellauswahl „Heute“, „Morgen“, „Heute + morgen“ statt Datumsfelder. Native Zeitauswahl. Der Proof-of-Work startet beim Öffnen des Sheets und rechnet, während man auswählt. |
+| **Weitersagen** | Mit einem Tipp in die Eltern-Gruppe | „Teilen“-Knopf über die Web Share API (Rückfall: Link kopieren). |
+| **Kita finden** | Ohne Tippen | „Kitas in meiner Nähe“: Der Standort wird **auf dem Gerät auf ca. 1 km gerundet**, bevor er an den Server geht, und dort nicht gespeichert. Alternativ Suche nach Name, Ort oder PLZ. |
+| **Elternbeirat meldet** | Link nicht jedes Mal heraussuchen | Option „Auf diesem Gerät merken“ legt das Link-Token lokal ab (bewusste Entscheidung des Nutzers, jederzeit löschbar). |
+
+### 9.3 Progressive Web App
+
+- **Installierbar** (Web-App-Manifest, Icons): Wer möchte, legt die Seite wie eine App auf den Homescreen. Kein App Store nötig.
+- **Service Worker** (Workbox oder schlank selbst geschrieben): App-Hülle offline verfügbar; der zuletzt geladene Status von *Meine Kitas* bleibt sichtbar, deutlich markiert mit „Stand: … – offline“.
+- **Keine Push-Benachrichtigungen** im ersten Schritt (bräuchten Abo-Kennungen bei Google/Apple). Später als Alternative: Kalender-Abo (ICS) pro Kita, das jedes Handy nativ kann.
+
+### 9.4 Budgets und Qualität
+
+| Kennzahl | Ziel |
+|---|---|
+| JavaScript initial | ≤ 80 KB gzip (ohne ALTCHA-Widget), Code-Splitting pro Route |
+| Largest Contentful Paint | < 2,0 s auf Mittelklasse-Android über langsames 4G (Lighthouse-Profil „Mobile“) |
+| Proof-of-Work | ≤ 3 s auf einem günstigen Android-Gerät (Messung, dann `ALTCHA_COUNTER_*` anpassen) |
+| Bedienung | Touch-Ziele ≥ 44 × 44 px, Schrift ≥ 16 px (kein Auto-Zoom bei iOS), funktioniert mit 200 % Schriftgröße, `safe-area-inset` für Notch/Home-Leiste |
+| Barrierefreiheit | WCAG 2.1 AA; Status nie nur über Farbe |
+
+- **Tests:** Playwright mit Geräteprofilen (iPhone SE, Pixel 7, ein kleines Android), Lighthouse CI mit Mobile-Profil als Pflichtprüfung in der CI (Performance ≥ 90, Barrierefreiheit ≥ 95). Vor dem Start einmal manuell auf echten Geräten, inklusive In-App-Browser von WhatsApp.
 - Ohne JavaScript: Hinweisseite (`<noscript>`). Melden geht ohnehin nur mit PoW, also mit JavaScript.
 
 ---
@@ -395,9 +464,9 @@ Die App **startet nicht**, wenn in Produktion Pflichtwerte fehlen oder unsicher 
 
 | Phase | Inhalt | Ergebnis |
 |---|---|---|
-| 1 | Go-Grundgerüst, Migrationen, sqlc, `status` + Tests portiert, OSM-Import als CLI | Statuslogik identisch zum Prototyp |
+| 1 | Go-Grundgerüst, Migrationen, sqlc, `status` + Tests portiert, Import des Landesdatensatzes (KiBiz) und OSM als CLI | Statuslogik identisch zum Prototyp, alle NRW-Kitas in der DB |
 | 2 | API vollständig nach OpenAPI, Integrationstests (Abläufe aus `test/app.test.ts`) | Backend-Parität |
-| 3 | React-Frontend, E2E-Tests | Funktionsgleich zum Prototyp |
+| 3 | React-Frontend mobile first inkl. PWA, E2E-Tests mit Geräteprofilen, Lighthouse CI | Funktionsgleich zum Prototyp, auf dem Handy schnell |
 | 4 | Deployment (Compose, Caddy, Backups), Prototyp entfernen | Produktiv in NRW |
 | 5 | Erweiterungen: DKIM-Stufe, ICS/RSS-Feed pro Kita, weitere Stammdatenquellen, Auswertungen | |
 
