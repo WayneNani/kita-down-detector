@@ -1,6 +1,6 @@
 import type { AngezeigterStatus, TagesStatus } from '../api/client';
-import { useOhneMeldungAlsRegulaer } from '../lib/einstellungen';
-import { GRUND_LABEL, STATUS_KURZ, STATUS_LABEL, STUFE_LABEL } from '../lib/texte';
+import { istRegulaerGeschlossen } from '../lib/feiertage';
+import { GRUND_LABEL, STATUS_ANGENOMMEN, STATUS_KURZ, STATUS_LABEL, STUFE_LABEL } from '../lib/texte';
 
 export interface Anzeige {
   /** Status für Farbe/Form (bei Annahme „regulaer“). */
@@ -9,27 +9,24 @@ export interface Anzeige {
   angenommen: boolean;
 }
 
-/** Wendet die lokale Ansichts-Einstellung an. Die Daten selbst bleiben unverändert. */
+/**
+ * Wendet die lokale Ansichts-Einstellung an; die Daten selbst bleiben unverändert.
+ * Nur Werktage: An Wochenenden und NRW-Feiertagen haben Kitas regulär geschlossen.
+ */
 export function anzeigeFuer(s: TagesStatus, ohneMeldungAlsRegulaer: boolean): Anzeige {
-  if (ohneMeldungAlsRegulaer && s.status === 'unbekannt') return { status: 'regulaer', angenommen: true };
+  if (ohneMeldungAlsRegulaer && s.status === 'unbekannt' && !istRegulaerGeschlossen(s.datum)) {
+    return { status: 'regulaer', angenommen: true };
+  }
   return { status: s.status, angenommen: false };
 }
 
-export function useAnzeige(s: TagesStatus): Anzeige {
-  const [annahme] = useOhneMeldungAlsRegulaer();
-  return anzeigeFuer(s, annahme);
-}
-
-/** Status immer mit Text UND Farbpunkt – nie nur über Farbe. */
-export function StatusBadge({ s, kurz = false, gross = false }: { s: TagesStatus; kurz?: boolean; gross?: boolean }) {
-  const a = useAnzeige(s);
-  const text = a.angenommen
-    ? kurz
-      ? 'Vermutlich regulär'
-      : 'Vermutlich regulär (keine Meldung)'
-    : kurz
-      ? STATUS_KURZ[a.status]
-      : STATUS_LABEL[a.status];
+/**
+ * Status immer mit Text UND Farbpunkt – nie nur über Farbe.
+ * `annahme` setzen nur Seiten, die den Ansichts-Schalter zeigen.
+ */
+export function StatusBadge({ s, kurz = false, gross = false, annahme = false }: { s: TagesStatus; kurz?: boolean; gross?: boolean; annahme?: boolean }) {
+  const a = anzeigeFuer(s, annahme);
+  const text = a.angenommen ? STATUS_ANGENOMMEN : kurz ? STATUS_KURZ[a.status] : STATUS_LABEL[a.status];
   return (
     <span className={`badge s-${a.status}${a.angenommen ? ' angenommen' : ''}${gross ? ' badge-gross' : ''}`}>
       <span className="punkt" aria-hidden="true" />

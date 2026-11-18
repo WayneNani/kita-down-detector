@@ -11,7 +11,7 @@ function entfernung(m: number): string {
   return m < 1000 ? `${Math.round(m / 50) * 50} m` : `${(m / 1000).toFixed(1).replace('.', ',')} km`;
 }
 
-export function KitaListe({ eintraege, leer }: { eintraege: KitaUebersicht[]; leer?: string }) {
+export function KitaListe({ eintraege, leer, annahme = false }: { eintraege: KitaUebersicht[]; leer?: string; annahme?: boolean }) {
   if (eintraege.length === 0) return leer ? <p className="leer">{leer}</p> : null;
   return (
     <ul className="kita-liste">
@@ -25,8 +25,8 @@ export function KitaListe({ eintraege, leer }: { eintraege: KitaUebersicht[]; le
                 {e.entfernung_m !== undefined && ` · ${entfernung(e.entfernung_m)}`}
               </span>
               <span className="kita-status-zeile">
-                <span className="tag-label">Heute</span> <StatusBadge s={e.heute} kurz />
-                <span className="tag-label">Morgen</span> <StatusBadge s={e.morgen} kurz />
+                <span className="tag-label">Heute</span> <StatusBadge s={e.heute} kurz annahme={annahme} />
+                <span className="tag-label">Morgen</span> <StatusBadge s={e.morgen} kurz annahme={annahme} />
               </span>
             </span>
             <IconPfeil className="pfeil" />

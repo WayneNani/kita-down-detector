@@ -2,7 +2,7 @@ import { useTitel } from '../lib/titel';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { api, type KitaDetail, type MeldungInput } from '../api/client';
+import { api, type KitaDetail, type MeldungInput, type TagesStatus } from '../api/client';
 import { schluessel, useInfo, useKita } from '../api/queries';
 import { useFavoriten } from '../lib/favoriten';
 import { useToast } from '../lib/toast';
@@ -56,7 +56,6 @@ export default function Kita() {
   const d = kita.data;
   const k = d.kita;
   const heute = d.tage[0];
-  const heuteAnzeige = heute ? anzeigeFuer(heute, ohneMeldungAlsRegulaer) : null;
   const weitere = d.tage.slice(1);
   const fav = istFavorit(k.id);
 
@@ -110,17 +109,7 @@ export default function Kita() {
 
       <Stand aktualisiert={kita.dataUpdatedAt} />
 
-      {heute && (
-        <section className={`heute-karte s-${heuteAnzeige?.status ?? heute.status}`} aria-labelledby="heute-titel">
-          <h2 id="heute-titel">Heute, {datumLang(heute.datum).split(', ')[1]}</h2>
-          <StatusBadge s={heute} gross />
-          <StatusDetails s={heute} />
-          {heute.status === 'unbekannt' && !heuteAnzeige?.angenommen && (
-            <p className="hinweis">Keine Meldung heißt nicht automatisch reguläre Betreuung.</p>
-          )}
-          {heuteAnzeige?.angenommen && <p className="hinweis">Es liegt keine Meldung vor – angezeigt nach Ihrer Einstellung.</p>}
-        </section>
-      )}
+      {heute && <HeuteKarte heute={heute} annahme={ohneMeldungAlsRegulaer} />}
 
       <section aria-labelledby="tage-titel">
         <h2 id="tage-titel">Nächste Tage</h2>
@@ -130,7 +119,7 @@ export default function Kita() {
             <li key={t.datum} className={istWochenende(t.datum) ? 'wochenende' : ''}>
               <span className="tag">{datumRelativ(t.datum, heute?.datum ?? info.heute)}</span>
               <span className="tag-status">
-                <StatusBadge s={t} />
+                <StatusBadge s={t} annahme={ohneMeldungAlsRegulaer} />
                 <StatusDetails s={t} />
               </span>
             </li>
@@ -187,5 +176,18 @@ export default function Kita() {
         <MeldeFormular heute={info.heute} grenzen={info} mitPow knopfText="Meldung absenden" onSenden={melden} />
       </BottomSheet>
     </div>
+  );
+}
+
+function HeuteKarte({ heute, annahme }: { heute: TagesStatus; annahme: boolean }) {
+  const a = anzeigeFuer(heute, annahme);
+  return (
+    <section className={`heute-karte s-${a.status}${a.angenommen ? ' angenommen' : ''}`} aria-labelledby="heute-titel">
+      <h2 id="heute-titel">Heute, {datumLang(heute.datum).split(', ')[1]}</h2>
+      <StatusBadge s={heute} gross annahme={annahme} />
+      <StatusDetails s={heute} />
+      {a.status === 'unbekannt' && <p className="hinweis">Keine Meldung heißt nicht automatisch reguläre Betreuung.</p>}
+      {a.angenommen && <p className="hinweis">Es liegt keine Meldung vor – angezeigt nach Ihrer Einstellung.</p>}
+    </section>
   );
 }

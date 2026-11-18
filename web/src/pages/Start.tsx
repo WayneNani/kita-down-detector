@@ -9,6 +9,7 @@ import { FehlerBox, Laden } from '../components/Fehler';
 import { IconOrt, IconSuche } from '../components/Icons';
 import { StatusBadge, StatusDetails } from '../components/Status';
 import { AnsichtUmschalter } from '../components/AnsichtUmschalter';
+import { useOhneMeldungAlsRegulaer } from '../lib/einstellungen';
 import { Stand } from '../components/Stand';
 import { adresse } from '../components/KitaListe';
 
@@ -17,6 +18,7 @@ const ORTE = ['', 'Bonn', 'Köln'];
 export default function Start() {
   useTitel('');
   const { ids } = useFavoriten();
+  const [ohneMeldungAlsRegulaer] = useOhneMeldungAlsRegulaer();
   const meine = useAuswahl(ids);
   const [q, setQ] = useState('');
   const qVerzoegert = useDeferredValue(q);
@@ -54,7 +56,7 @@ export default function Start() {
           <AnsichtUmschalter />
           {meine.isPending && <Laden />}
           {meine.isError && !meine.data && <FehlerBox fehler={meine.error} />}
-          <KitaListe eintraege={meineSortiert} />
+          <KitaListe eintraege={meineSortiert} annahme={ohneMeldungAlsRegulaer} />
           <Stand aktualisiert={meine.dataUpdatedAt} />
         </section>
       )}

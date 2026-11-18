@@ -16,6 +16,9 @@ export const STATUS_KURZ: Record<AngezeigterStatus, string> = {
   geschlossen: 'Geschlossen',
 };
 
+/** Lokale Ansicht: Werktag ohne Meldung, als regulär angenommen. */
+export const STATUS_ANGENOMMEN = 'Vermutlich regulär (keine Meldung)';
+
 export const STATUS_HILFE: Record<Exclude<AngezeigterStatus, 'unbekannt'>, string> = {
   regulaer: 'Alles normal – z. B. um eine Falschmeldung richtigzustellen',
   verkuerzt: 'Betreuung nur zu kürzeren Zeiten',

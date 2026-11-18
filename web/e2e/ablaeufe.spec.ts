@@ -60,8 +60,9 @@ test('Ansicht: Tage ohne Meldung als regulär (lokal, Standard aus)', async ({ p
   await expect(schalter).not.toBeChecked();
   await expect(page.locator('.tage-liste')).toContainText('Keine Meldung');
   await schalter.check();
-  await expect(page.locator('.tage-liste')).toContainText('Vermutlich regulär');
-  await expect(page.locator('.tage-liste')).not.toContainText('Keine Meldung');
+  await expect(page.locator('.tage-liste li:not(.wochenende)').first()).toContainText('Vermutlich regulär');
+  // Wochenenden (und NRW-Feiertage) bleiben „Keine Meldung“ – Kitas sind dann regulär geschlossen
+  await expect(page.locator('.tage-liste li.wochenende').first()).toContainText('Keine Meldung');
   // bleibt nach Neuladen erhalten, nur lokal
   await page.reload();
   await expect(page.getByRole('switch', { name: /Tage ohne Meldung/ })).toBeChecked();
