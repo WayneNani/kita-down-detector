@@ -3,7 +3,7 @@
 Stack: **Go**, **PostgreSQL**, **React**. Leitlinien: **simpel, schnell, sicher**.
 Fachliche Grundlagen (Statusmodell, Vertrauensstufen, Datensparsamkeit): [`konzept.md`](konzept.md).
 
-Der bestehende Node-Prototyp dient als **ausführbare Spezifikation**: Seine Tests (Statuslogik, Abläufe) werden nach Go portiert, danach wird er entfernt (siehe [Abschnitt 13](#13-migration-vom-node-prototyp)).
+**Stand:** umgesetzt. Der frühere Node-Prototyp ist entfernt (in der Git-Historie erhalten); seine Tests sind nach Go portiert (siehe [Abschnitt 13](#13-migration-vom-node-prototyp)).
 
 ---
 
@@ -407,7 +407,7 @@ Die meisten Eltern kommen **vom Handy**, oft über einen Link aus der Eltern-Wha
 
 | Kennzahl | Ziel |
 |---|---|
-| JavaScript initial | ≤ 80 KB gzip (ohne ALTCHA-Widget), Code-Splitting pro Route |
+| JavaScript initial | ≤ 100 KB gzip (ohne ALTCHA-Widget), Code-Splitting pro Route. Ursprünglich 80 KB geplant; react-dom, react-router und TanStack Query allein brauchen ~87 KB. Aktuell: ~99 KB. Weniger ginge nur mit Preact. |
 | Largest Contentful Paint | < 2,0 s auf Mittelklasse-Android über langsames 4G (Lighthouse-Profil „Mobile“) |
 | Proof-of-Work | ≤ 3 s auf einem günstigen Android-Gerät (Messung, dann `ALTCHA_COUNTER_*` anpassen) |
 | Bedienung | Touch-Ziele ≥ 44 × 44 px, Schrift ≥ 16 px (kein Auto-Zoom bei iOS), funktioniert mit 200 % Schriftgröße, `safe-area-inset` für Notch/Home-Leiste |
@@ -442,13 +442,13 @@ pgx-Pool: 10–20 Verbindungen. Prepared Statements macht pgx automatisch.
 | E2E | Playwright | Anonym melden (inkl. echtem PoW), Link-Meldung, Berichtigung bis Bestätigung |
 | Statisch | `go vet`, `staticcheck`, `govulncheck`, `tsc --noEmit`, ESLint (inkl. Verbot `dangerouslySetInnerHTML`) | in CI |
 
-**CI (GitHub Actions):** Lint → Tests (Go + Postgres-Service) → Frontend-Build → Go-Build mit eingebettetem Frontend → E2E gegen das fertige Binary → Container-Image (nur auf `main`). Dependabot für Go-Module, npm und Actions; Actions auf Commit-SHA gepinnt.
+**CI (GitHub Actions):** Lint → Tests (Go + Postgres-Service) → Frontend-Build → Go-Build mit eingebettetem Frontend → E2E gegen das fertige Binary → Container-Image (nur auf `main`). Dependabot für Go-Module, npm, Docker und Actions. Actions sind derzeit auf Versions-Tags gepinnt; Pinning auf Commit-SHA steht noch aus. Das Container-Image wird noch nicht in der CI gebaut.
 
 ---
 
 ## 12. Konfiguration
 
-Wie im Prototyp über Umgebungsvariablen (siehe README), ergänzt um:
+Über Umgebungsvariablen (vollständige Liste im README), u. a.:
 
 | Variable | Beschreibung |
 |---|---|
@@ -462,13 +462,13 @@ Die App **startet nicht**, wenn in Produktion Pflichtwerte fehlen oder unsicher 
 
 ## 13. Migration vom Node-Prototyp
 
-| Phase | Inhalt | Ergebnis |
-|---|---|---|
-| 1 | Go-Grundgerüst, Migrationen, sqlc, `status` + Tests portiert, Import des Landesdatensatzes (KiBiz) und OSM als CLI | Statuslogik identisch zum Prototyp, alle NRW-Kitas in der DB |
-| 2 | API vollständig nach OpenAPI, Integrationstests (Abläufe aus `test/app.test.ts`) | Backend-Parität |
-| 3 | React-Frontend mobile first inkl. PWA, E2E-Tests mit Geräteprofilen, Lighthouse CI | Funktionsgleich zum Prototyp, auf dem Handy schnell |
-| 4 | Deployment (Compose, Caddy, Backups), Prototyp entfernen | Produktiv in NRW |
-| 5 | Erweiterungen: DKIM-Stufe, ICS/RSS-Feed pro Kita, weitere Stammdatenquellen, Auswertungen | |
+| Phase | Inhalt | Ergebnis | Stand |
+|---|---|---|---|
+| 1 | Go-Grundgerüst, Migrationen, sqlc, `status` + Tests portiert, Import des Landesdatensatzes (KiBiz) und OSM als CLI | Statuslogik identisch zum Prototyp, alle NRW-Kitas in der DB | ✅ (Import generisch für CSV/GeoJSON/Esri-JSON/Overpass; echte Dateien noch nicht importiert) |
+| 2 | API vollständig nach OpenAPI, Integrationstests (Abläufe aus `test/app.test.ts`) | Backend-Parität | ✅ |
+| 3 | React-Frontend mobile first inkl. PWA, E2E-Tests mit Geräteprofilen, Lighthouse CI | Funktionsgleich zum Prototyp, auf dem Handy schnell | ✅ bis auf Lighthouse CI |
+| 4 | Deployment (Compose, Caddy, Backups), Prototyp entfernen | Produktiv in NRW | Dateien fertig (`deploy/`), noch nicht in Betrieb |
+| 5 | Erweiterungen: DKIM-Stufe, ICS/RSS-Feed pro Kita, weitere Stammdatenquellen, Auswertungen | | offen |
 
 ---
 

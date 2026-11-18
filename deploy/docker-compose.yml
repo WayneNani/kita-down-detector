@@ -1,0 +1,86 @@
+# Produktion: eine VM in der EU, eine App-Instanz.
+#   cd deploy && docker compose up -d --build
+# Vorher die Dateien in deploy/secrets/ anlegen (siehe deploy/README.md).
+name: kita-ausfall
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN setzen, z. B. kita-ausfall.example}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [web]
+    depends_on: [app]
+
+  app:
+    build: ..
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      BASE_URL: https://${DOMAIN}
+      KONTAKT_EMAIL: ${KONTAKT_EMAIL:?KONTAKT_EMAIL setzen}
+      MAIL_FROM: ${MAIL_FROM:-Kita-Ausfall NRW <noreply@${DOMAIN}>}
+      VERTRAUTE_DOMAINS: ${VERTRAUTE_DOMAINS:-}
+      TRUSTED_PROXY_CIDRS: 172.30.0.0/24
+      DATABASE_URL_FILE: /run/secrets/database_url
+      MIGRATE_DATABASE_URL_FILE: /run/secrets/migrate_database_url
+      ALTCHA_HMAC_SECRET_FILE: /run/secrets/altcha_secret
+      SMTP_URL_FILE: /run/secrets/smtp_url
+    secrets: [database_url, migrate_database_url, altcha_secret, smtp_url]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "/kita-ausfall", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks: [web, db]
+    depends_on:
+      db: { condition: service_healthy }
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: kita
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      KITA_MIGRATE_PASSWORD_FILE: /run/secrets/kita_migrate_password
+      KITA_APP_PASSWORD_FILE: /run/secrets/kita_app_password
+    secrets: [postgres_password, kita_migrate_password, kita_app_password]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init.sh:/docker-entrypoint-initdb.d/10-kita.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d kita"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [db]   # nicht nach außen veröffentlicht
+
+networks:
+  web:
+    ipam:
+      config: [{ subnet: 172.30.0.0/24 }]
+  db:
+    internal: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+  pgdata:
+
+secrets:
+  database_url: { file: ./secrets/database_url }
+  migrate_database_url: { file: ./secrets/migrate_database_url }
+  altcha_secret: { file: ./secrets/altcha_secret }
+  smtp_url: { file: ./secrets/smtp_url }
+  postgres_password: { file: ./secrets/postgres_password }
+  kita_migrate_password: { file: ./secrets/kita_migrate_password }
+  kita_app_password: { file: ./secrets/kita_app_password }

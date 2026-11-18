@@ -1,0 +1,7 @@
+id;name;traeger;strasse;plz;ort;lat;lon;email
+T1;Testkita Sonnenschein;Stadt Bonn (Testdaten);Teststraße 1;53111;Bonn;50.7374;7.0982;testkita.sonnenschein@bonn.example
+T2;Testkita Rheinaue;Freier Träger (Testdaten);Beispielweg 5;53175;Bonn;50.7136;7.1504;
+T3;Testkita Pusteblume;Elterninitiative (Testdaten);Musterallee 12;53115;Bonn;50.7276;7.0919;kita-pusteblume@traeger.example
+T4;Testkita Domspatzen;Stadt Köln (Testdaten);Probegasse 3;50667;Köln;50.9413;6.9583;kita-domspatzen@koeln.example
+T5;Testkita Regenbogen;Kirchengemeinde (Testdaten);Teststraße 99;50672;Köln;50.9406;6.9372;
+T6;Testkita Kleine Strolche;Freier Träger (Testdaten);Beispielplatz 7;50823;Köln;50.9526;6.9179;

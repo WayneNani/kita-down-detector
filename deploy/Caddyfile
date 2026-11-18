@@ -1,0 +1,16 @@
+# TLS automatisch (Let's Encrypt). Bewusst KEIN „log“-Block: Caddy schreibt
+# dann keine Zugriffsprotokolle – IP-Adressen landen nirgends.
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		-Server
+	}
+
+	# Interne Prüfpfade nicht nach außen geben
+	@intern path /healthz /readyz
+	respond @intern 404
+
+	reverse_proxy app:8080
+}

@@ -64,8 +64,8 @@ Zusätzlich ist das **Änderungsprotokoll** je Kita öffentlich – das schafft 
 
 ## 6. Melde-Links für Elternbeiräte und Kitas
 
-- Erzeugung per CLI: `npm run link:create -- --kita <id> --rolle elternbeirat|kita`.
-- Jährliche Rotation (Ende Kita-Jahr), Widerruf jederzeit: `npm run link:create -- --kita <id> --widerrufen`.
+- Erzeugung per CLI: `kita-ausfall link erstellen --kita <id> --rolle elternbeirat|kita`.
+- Jährliche Rotation (Ende Kita-Jahr), Widerruf jederzeit: `kita-ausfall link widerrufen --kita <id>`.
 
 **Ausgabe an den Elternbeirat – Vorschlag „Die Kita lädt ein“:** Der Elternbeirat beantragt den Link auf der Kita-Seite. Die Kita bestätigt per Mail, dass die Person zum Elternbeirat gehört. Damit beantwortet sich auch, wer überhaupt Elternbeirat ist: Das weiß nur die Kita.
 
@@ -96,7 +96,7 @@ Das Land veröffentlicht den Datensatz **„Kindertageseinrichtungen in NRW“**
 
 - Inhalt laut Beschreibung: Name, Adresse, Anzahl Gruppen und Plätze. Damit haben wir **alle Kitas mit Betriebserlaubnis**, nicht nur die in OSM erfassten.
 - Monatlicher Import. Kitas, die verschwinden, werden ausgeblendet statt gelöscht.
-- OSM (`npm run import:osm`) bleibt nur als Ergänzung (Koordinaten, gelegentlich E-Mail).
+- OSM (`kita-ausfall import --quelle osm --herkunft osm …` mit einer Overpass-Antwort) bleibt nur als Ergänzung (Koordinaten, gelegentlich E-Mail).
 - **Noch zu prüfen:** genaue Felder, ob es eine stabile Einrichtungs-ID gibt, ob Träger enthalten ist. Aus der Entwicklungsumgebung waren die Portale nicht erreichbar.
 
 ### 8.2 Kontaktadressen: mehrere Quellen, eine Regel

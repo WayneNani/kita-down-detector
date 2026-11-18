@@ -1,0 +1,542 @@
+openapi: 3.1.0
+info:
+  title: Kita-Ausfall NRW API
+  version: 1.0.0
+  description: |
+    Datensparsames Tracking von verkürzten Betreuungszeiten, Notbetreuung und
+    Schließungen in Kitas (NRW). Alle Lese-Endpunkte liefern nur aggregierte Daten.
+
+    - Datumswerte: `YYYY-MM-DD` (Kalendertag in Deutschland, Europe/Berlin)
+    - Uhrzeiten: `HH:MM`
+    - Fehler: RFC 9457 (`application/problem+json`), `detail` auf Deutsch
+    - POST-Anfragen: `Content-Type: application/json`, max. 8 KB, unbekannte Felder werden abgelehnt
+    - Tokens aus Links (Melde-Link, Berichtigung, Einladung) werden im
+      `Authorization`-Header gesendet, nie in der URL.
+  license:
+    name: Statusdaten CC BY 4.0, Kita-Stammdaten je nach Quelle (DL-DE BY 2.0, ODbL)
+servers:
+  - url: /api/v1
+
+paths:
+  /info:
+    get:
+      summary: Konfiguration für Oberfläche und Datenschutzseite
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Info' }
+
+  /kitas:
+    get:
+      summary: Kitas suchen (Name, Ort, Straße, Träger oder PLZ)
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 2, maxLength: 100 } }
+      responses:
+        '200':
+          description: Max. 50 Treffer
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KitaListe' }
+        '400': { $ref: '#/components/responses/Problem' }
+
+  /kitas/nahe:
+    get:
+      summary: Kitas in der Nähe
+      description: |
+        Der Client rundet die Koordinaten vor dem Senden auf 2 Nachkommastellen
+        (ca. 1 km). Der Server rundet zusätzlich und speichert nichts.
+        Liefert max. 30 Kitas im Umkreis von 3 km, sortiert nach Entfernung.
+      parameters:
+        - { name: lat, in: query, required: true, schema: { type: number } }
+        - { name: lon, in: query, required: true, schema: { type: number } }
+      responses:
+        '200':
+          description: OK (`entfernung_m` ist gesetzt)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KitaListe' }
+        '400': { $ref: '#/components/responses/Problem' }
+
+  /kitas/auswahl:
+    get:
+      summary: Status mehrerer Kitas (für „Meine Kitas“)
+      parameters:
+        - name: ids
+          in: query
+          required: true
+          description: Kommagetrennte IDs, max. 20
+          schema: { type: string, example: '12,345' }
+      responses:
+        '200':
+          description: OK (unbekannte IDs werden ausgelassen)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KitaListe' }
+        '400': { $ref: '#/components/responses/Problem' }
+
+  /kitas/{id}:
+    get:
+      summary: Kita mit Status der nächsten 14 Tage und Änderungsprotokoll
+      parameters:
+        - $ref: '#/components/parameters/KitaId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KitaDetail' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /status:
+    get:
+      summary: Alle Kitas mit gemeldeter Einschränkung an einem Tag (offene Daten)
+      description: Fehlende Kitas bedeuten „keine Meldung“, nicht „regulär“.
+      parameters:
+        - { name: datum, in: query, required: false, schema: { type: string, format: date }, description: 'Standard: heute' }
+        - { name: ort, in: query, required: false, schema: { type: string }, description: 'Filter auf Ort (exakt, ohne Groß-/Kleinschreibung)' }
+      responses:
+        '200':
+          description: OK, sortiert nach Schwere (geschlossen, Notbetreuung, verkürzt), dann Name
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Einschraenkungen' }
+        '400': { $ref: '#/components/responses/Problem' }
+
+  /pow/challenge:
+    get:
+      summary: Proof-of-Work-Challenge für das ALTCHA-Widget (v2, PBKDF2/SHA-256)
+      responses:
+        '200':
+          description: Challenge im ALTCHA-v2-Format
+          content:
+            application/json:
+              schema: { type: object }
+
+  /kitas/{id}/meldungen:
+    post:
+      summary: Anonyme Meldung (mit Proof-of-Work)
+      parameters:
+        - $ref: '#/components/parameters/KitaId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AnonymeMeldung' }
+      responses:
+        '201':
+          description: Gespeichert; aktualisierte Kita-Daten
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KitaDetail' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+
+  /link:
+    get:
+      summary: Zu einem Melde-Link gehörende Kita und Rolle
+      security: [{ LinkToken: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LinkInfo' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /link/meldungen:
+    post:
+      summary: Verifizierte Meldung über einen Melde-Link (ohne Proof-of-Work)
+      security: [{ LinkToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MeldungInput' }
+      responses:
+        '201':
+          description: Gespeichert; aktualisierte Kita-Daten
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KitaDetail' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+
+  /kitas/{id}/berichtigungen:
+    post:
+      summary: Berichtigung anfragen – Bestätigungsmail an die hinterlegte Kita-Adresse
+      parameters:
+        - $ref: '#/components/parameters/KitaId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AnonymeMeldung' }
+      responses:
+        '202':
+          description: Mail eingereiht
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Gesendet' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409':
+          description: Für diese Kita ist keine Kontaktadresse hinterlegt
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+
+  /berichtigung:
+    get:
+      summary: Inhalt einer angefragten Berichtigung (zur Bestätigung durch die Kita)
+      security: [{ BerichtigungToken: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BerichtigungInfo' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /berichtigung/bestaetigen:
+    post:
+      summary: Berichtigung bestätigen (einmalig)
+      security: [{ BerichtigungToken: [] }]
+      responses:
+        '200':
+          description: Übernommen
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KitaDetail' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /kitas/{id}/einladungen:
+    post:
+      summary: Elternbeirat beantragt einen Melde-Link; die Kita bestätigt per Mail
+      description: |
+        Ist für die Kita eine Adresse hinterlegt, geht die Bestätigungsanfrage sofort
+        dorthin (`status: gesendet`). Sonst muss `kita_email` angegeben werden; die
+        Adresse wird dann geprüft (`status: pruefung`), außer ihre Domain steht auf
+        der Liste vertrauenswürdiger Träger-Domains.
+        Die Adresse des Elternbeirats wird nur bis zum Versand des Links gespeichert.
+      parameters:
+        - $ref: '#/components/parameters/KitaId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EinladungAnfrage' }
+      responses:
+        '202':
+          description: Angenommen
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EinladungAntwort' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+
+  /einladung:
+    get:
+      summary: Einladung ansehen (für die Kita)
+      security: [{ EinladungToken: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EinladungInfo' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /einladung/bestaetigen:
+    post:
+      summary: Kita bestätigt den Elternbeirat; optional auch eigenen Kita-Link anfordern
+      security: [{ EinladungToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                kita_link: { type: boolean, description: 'Auch einen Melde-Link für die Kita selbst an die Kita-Adresse senden' }
+      responses:
+        '200':
+          description: Bestätigt, Links werden versendet
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean } } }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /kitas/{id}/kontakt-vorschlaege:
+    post:
+      summary: Kita hinterlegt ihre Funktionsadresse (wird geprüft, dann kommt ein Kita-Link per Mail)
+      parameters:
+        - $ref: '#/components/parameters/KitaId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, altcha]
+              properties:
+                email: { type: string, format: email }
+                altcha: { type: string }
+      responses:
+        '202':
+          description: Zur Prüfung angenommen
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { const: pruefung } } }
+        '403': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+
+  /kitas/fehlend:
+    post:
+      summary: Fehlende Kita melden (wird geprüft)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FehlendeKita' }
+      responses:
+        '202':
+          description: Zur Prüfung angenommen
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { const: pruefung } } }
+        '403': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+
+components:
+  parameters:
+    KitaId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+
+  securitySchemes:
+    LinkToken: { type: http, scheme: Link, description: 'Authorization: Link <token>' }
+    BerichtigungToken: { type: http, scheme: Berichtigung, description: 'Authorization: Berichtigung <token>' }
+    EinladungToken: { type: http, scheme: Einladung, description: 'Authorization: Einladung <token>' }
+
+  responses:
+    Problem:
+      description: Fehler
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+    Status:
+      type: string
+      enum: [regulaer, verkuerzt, notbetreuung, geschlossen]
+    AngezeigterStatus:
+      type: string
+      enum: [unbekannt, regulaer, verkuerzt, notbetreuung, geschlossen]
+    Grund:
+      type: string
+      enum: [personalmangel, krankheitswelle, streik, schliesstag, sonstiges]
+    Stufe:
+      type: integer
+      enum: [0, 10, 20, 30, 40, 50]
+      description: |
+        0 keine Meldung · 10 unbestätigt (Einzelmeldung) · 20 von mehreren Eltern bestätigt ·
+        30 verifiziert durch Elternbeirat · 40 verifiziert durch Kita · 50 berichtigt durch Kita
+
+    Info:
+      type: object
+      required: [bestaetigungs_schwelle, aufbewahrung_tage, kontakt_email, max_tage_zurueck, max_tage_voraus, max_zeitraum_tage, heute]
+      properties:
+        bestaetigungs_schwelle: { type: integer }
+        aufbewahrung_tage: { type: integer }
+        kontakt_email: { type: string }
+        max_tage_zurueck: { type: integer }
+        max_tage_voraus: { type: integer }
+        max_zeitraum_tage: { type: integer }
+        heute: { type: string, format: date, description: 'Heutiges Datum in Deutschland (Serverzeit)' }
+
+    KitaKurz:
+      type: object
+      required: [id, name, traeger, strasse, plz, ort, lat, lon]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        traeger: { type: [string, 'null'] }
+        strasse: { type: [string, 'null'] }
+        plz: { type: [string, 'null'] }
+        ort: { type: [string, 'null'] }
+        lat: { type: [number, 'null'] }
+        lon: { type: [number, 'null'] }
+
+    TagesStatus:
+      type: object
+      required: [datum, status, stufe, uhrzeit_von, uhrzeit_bis, grund, anzahl]
+      properties:
+        datum: { type: string, format: date }
+        status: { $ref: '#/components/schemas/AngezeigterStatus' }
+        stufe: { $ref: '#/components/schemas/Stufe' }
+        uhrzeit_von: { type: [string, 'null'], example: '08:00' }
+        uhrzeit_bis: { type: [string, 'null'], example: '12:30' }
+        grund: { oneOf: [{ $ref: '#/components/schemas/Grund' }, { type: 'null' }] }
+        anzahl: { type: integer, description: 'Unabhängige anonyme Meldungen für den angezeigten Status' }
+
+    KitaUebersicht:
+      type: object
+      required: [kita, heute, morgen]
+      properties:
+        kita: { $ref: '#/components/schemas/KitaKurz' }
+        heute: { $ref: '#/components/schemas/TagesStatus' }
+        morgen: { $ref: '#/components/schemas/TagesStatus' }
+        entfernung_m: { type: integer, description: 'Nur bei /kitas/nahe' }
+
+    KitaListe:
+      type: object
+      required: [kitas]
+      properties:
+        kitas:
+          type: array
+          items: { $ref: '#/components/schemas/KitaUebersicht' }
+
+    ProtokollEintrag:
+      type: object
+      required: [datum, alt_status, neu_status, neu_stufe, erstellt_am]
+      properties:
+        datum: { type: string, format: date }
+        alt_status: { $ref: '#/components/schemas/AngezeigterStatus' }
+        neu_status: { $ref: '#/components/schemas/AngezeigterStatus' }
+        neu_stufe: { $ref: '#/components/schemas/Stufe' }
+        erstellt_am: { type: string, format: date }
+
+    KitaDetail:
+      type: object
+      required: [kita, tage, protokoll, kontakt_bekannt]
+      properties:
+        kita: { $ref: '#/components/schemas/KitaKurz' }
+        tage:
+          type: array
+          description: 14 Tage ab heute
+          items: { $ref: '#/components/schemas/TagesStatus' }
+        protokoll:
+          type: array
+          description: Letzte 30 Änderungen, neueste zuerst
+          items: { $ref: '#/components/schemas/ProtokollEintrag' }
+        kontakt_bekannt:
+          type: boolean
+          description: Ist eine Kontaktadresse hinterlegt (Berichtigung/Einladung direkt möglich)?
+
+    Einschraenkungen:
+      type: object
+      required: [datum, kitas]
+      properties:
+        datum: { type: string, format: date }
+        kitas:
+          type: array
+          items:
+            type: object
+            required: [kita, status]
+            properties:
+              kita: { $ref: '#/components/schemas/KitaKurz' }
+              status: { $ref: '#/components/schemas/TagesStatus' }
+
+    MeldungInput:
+      type: object
+      additionalProperties: false
+      required: [status, datum_von]
+      properties:
+        status: { $ref: '#/components/schemas/Status' }
+        datum_von: { type: string, format: date }
+        datum_bis: { type: [string, 'null'], format: date, description: 'Standard: datum_von' }
+        uhrzeit_von: { type: [string, 'null'], description: 'Pflicht bei verkuerzt; optional bei notbetreuung' }
+        uhrzeit_bis: { type: [string, 'null'] }
+        grund: { oneOf: [{ $ref: '#/components/schemas/Grund' }, { type: 'null' }] }
+
+    AnonymeMeldung:
+      allOf:
+        - $ref: '#/components/schemas/MeldungInput'
+        - type: object
+          required: [altcha]
+          properties:
+            altcha: { type: string, description: 'Payload des ALTCHA-Widgets' }
+
+    LinkInfo:
+      type: object
+      required: [kita, rolle, gueltig_bis]
+      properties:
+        kita: { $ref: '#/components/schemas/KitaKurz' }
+        rolle: { type: string, enum: [elternbeirat, kita] }
+        gueltig_bis: { type: string, format: date }
+
+    BerichtigungInfo:
+      type: object
+      required: [kita, meldung]
+      properties:
+        kita: { $ref: '#/components/schemas/KitaKurz' }
+        meldung: { $ref: '#/components/schemas/MeldungInput' }
+
+    Gesendet:
+      type: object
+      required: [gesendet_an]
+      properties:
+        gesendet_an: { type: string, description: 'Maskierte Adresse, z. B. k***@stadt.de' }
+
+    EinladungAnfrage:
+      type: object
+      additionalProperties: false
+      required: [email, altcha]
+      properties:
+        email: { type: string, format: email, description: 'Adresse des Elternbeirats für den Link' }
+        kita_email: { type: [string, 'null'], format: email, description: 'Nur nötig, wenn keine Kita-Adresse hinterlegt ist' }
+        altcha: { type: string }
+
+    EinladungAntwort:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [gesendet, pruefung] }
+        gesendet_an: { type: string, description: 'Maskierte Kita-Adresse (nur bei gesendet)' }
+
+    EinladungInfo:
+      type: object
+      required: [kita]
+      properties:
+        kita: { $ref: '#/components/schemas/KitaKurz' }
+
+    FehlendeKita:
+      type: object
+      additionalProperties: false
+      required: [name, strasse, plz, ort, altcha]
+      properties:
+        name: { type: string, maxLength: 200 }
+        strasse: { type: string, maxLength: 200 }
+        plz: { type: string, pattern: '^\d{5}$' }
+        ort: { type: string, maxLength: 100 }
+        altcha: { type: string }
+
+    Problem:
+      type: object
+      required: [title, status]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        fehler:
+          type: array
+          items:
+            type: object
+            required: [meldung]
+            properties:
+              feld: { type: string }
+              meldung: { type: string }
