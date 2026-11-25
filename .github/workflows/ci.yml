@@ -23,7 +23,7 @@ jobs:
       TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/kita_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Vet
@@ -72,7 +72,7 @@ jobs:
       TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/kita_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - uses: actions/setup-node@v4
