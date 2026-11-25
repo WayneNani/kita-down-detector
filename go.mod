@@ -3,7 +3,7 @@ module github.com/WayneNani/kita-down-detector
 go 1.26.0
 
 require (
-	github.com/altcha-org/altcha-lib-go/v2 v2.4.1
+	github.com/altcha-org/altcha-lib-go/v2 v2.5.0
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/pressly/goose/v3 v3.26.0
 	github.com/wneessen/go-mail v0.7.2
